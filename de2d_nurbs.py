@@ -1,5 +1,6 @@
 import numpy as np
-from lshade_cop import LSHADE_COP
+# from lshade_cop import LSHADE_COP
+from lshade_cop_vectorized import LSHADE_COP
 import matplotlib.pyplot as plt
 from geomdl import NURBS, BSpline
 from shapely.geometry import Polygon, Point, LineString
@@ -60,7 +61,8 @@ class ScenarioConfig:
         self.nsampling = 50
         self.line_width = 2
         self.pop_size = 100
-        self.max_fes = 12000
+        self.max_fes = None
+        self.n_generations = 200
         self.start = np.array([-1.4, -0.8])
         self.goal = np.array([1.4, 0.8])
         self.th_start = 0.0
@@ -279,63 +281,135 @@ class DE2D_NURBS:
         return curvature
 
     @staticmethod
+    def compute_nurbs_basis(knot_vector, degree, nsampling):
+        n_ctrlpts = len(knot_vector) - degree - 1
+        eval_pts = np.linspace(knot_vector[degree], knot_vector[-degree-1], nsampling)
+        N = np.zeros((nsampling, n_ctrlpts))
+        for i_u, u in enumerate(eval_pts):
+            if u >= knot_vector[-1]:
+                span = n_ctrlpts - 1
+            elif u <= knot_vector[0]:
+                span = degree
+            else:
+                span = np.searchsorted(knot_vector, u, side='right') - 1
+                span = max(degree, min(span, n_ctrlpts - 1))
+            left = np.zeros(degree + 1)
+            right = np.zeros(degree + 1)
+            N_local = np.zeros(degree + 1)
+            N_local[0] = 1.0
+            for j in range(1, degree + 1):
+                left[j] = u - knot_vector[span + 1 - j]
+                right[j] = knot_vector[span + j] - u
+                saved = 0.0
+                for r in range(j):
+                    temp = N_local[r] / (right[r+1] + left[j-r])
+                    N_local[r] = saved + right[r+1] * temp
+                    saved = left[j-r] * temp
+                N_local[j] = saved
+            N[i_u, span - degree:span + 1] = N_local
+        return N, eval_pts
+
+    @staticmethod
+    def evaluate_nurbs_batch(ctrlpts_batch, weights_batch, basis_matrix):
+        N = basis_matrix[np.newaxis, :, :]
+        W = weights_batch[:, np.newaxis, :]
+        weighted = N * W
+        denom = weighted.sum(axis=-1, keepdims=True)
+        denom = np.where(denom == 0, 1.0, denom)
+        R = weighted / denom
+        points = np.matmul(R, ctrlpts_batch)
+        return points
+
+    @staticmethod
     def individual_cost_function(pop, shared_pop=[], static_params=None):
         if static_params is None:
             raise ValueError("static_params must be provided")
+
+        if "basis_matrix" not in static_params:
+            N, _ = DE2D_NURBS.compute_nurbs_basis(
+                static_params["knots"], static_params["degree"],
+                static_params.get("nsampling", 100))
+            static_params["basis_matrix"] = N
+
         kappa_max = static_params["kappa_max"]
         r = static_params["radius"]
-        nsampling = static_params.get("nsampling", 100)
-        length = []
-        h_obs = []
-        h_kappa = []
-        h_workspace = []
-        for pop_i in pop:
-            dim = static_params["num_free_ctrlpts"] * static_params["space_dim"]
-            deltaP = pop_i[:dim].reshape(
-                (static_params["num_free_ctrlpts"], static_params["space_dim"]))
-            deltaw = pop_i[dim:]
-            curve = DE2D_NURBS.get_nurbs(static_params, deltaP, deltaw,
-                                          Nsampling=nsampling)
-            curve.evaluate()
-            points_curve_i = np.array(curve.evalpts)
-            diff_curve = np.diff(points_curve_i, axis=0)
-            length_i = np.sum(np.linalg.norm(diff_curve, axis=1))
-            length.append(length_i)
-            kappa_i = DE2D_NURBS.get_curvature_diff(points_curve_i)
-            kappa_i[kappa_i <= kappa_max] = kappa_max
-            h_kappa.append(0.05 * np.sum((kappa_i - kappa_max)**2))
-            expanded_obs = static_params["expanded_obstacles"]
-            is_circle = (
-                len(expanded_obs) > 0 and
-                isinstance(expanded_obs[0], (tuple, list)) and
-                len(expanded_obs[0]) == 3
-            )
+        n_free = static_params["num_free_ctrlpts"]
+        space_dim = static_params["space_dim"]
+        n_static = static_params["num_static_ctrlpts"]
+        s = n_static // 2
+
+        # ========== Extract all deltaP / deltaw ==========
+        dim = n_free * space_dim
+        deltaP_all = pop[:, :dim].reshape(pop.shape[0], n_free, space_dim)
+        deltaw_all = pop[:, dim:]
+
+        # ========== Build control points and weights for all ==========
+        base_c = np.asarray(static_params["initial_ctrlpts"])
+        base_w = np.asarray(static_params["initial_weights"])
+        ctrlpts_all = np.broadcast_to(base_c, (pop.shape[0], *base_c.shape)).copy()
+        ctrlpts_all[:, s:s+n_free] += deltaP_all
+        weights_all = np.broadcast_to(base_w, (pop.shape[0], *base_w.shape)).copy()
+        weights_all[:, s:s+n_free] += deltaw_all
+        wmax = weights_all.max(axis=1, keepdims=True)
+        wmax[wmax == 0] = 1.0
+        weights_all = weights_all / wmax
+
+        # ========== Evaluate all curves at once ==========
+        points_all = DE2D_NURBS.evaluate_nurbs_batch(
+            ctrlpts_all, weights_all, static_params["basis_matrix"])
+
+        # ========== Length (vectorized) ==========
+        diff_all = np.diff(points_all, axis=1)
+        length = np.linalg.norm(diff_all, axis=-1).sum(axis=-1)
+
+        # ========== Curvature (vectorized) ==========
+        dx = np.gradient(points_all[:, :, 0], axis=1)
+        dy = np.gradient(points_all[:, :, 1], axis=1)
+        d2x = np.gradient(dx, axis=1)
+        d2y = np.gradient(dy, axis=1)
+        norm_d = np.sqrt(dx**2 + dy**2)
+        cross = dx * d2y - dy * d2x
+        kappa_all = np.abs(cross) / (norm_d**3 + 1e-8)
+        kappa_all = np.where(kappa_all <= kappa_max, kappa_max, kappa_all)
+        h_kappa = 0.05 * np.sum((kappa_all - kappa_max)**2, axis=1)
+
+        # ========== Workspace (vectorized — rectangle) ==========
+        xmin_env = static_params.get("xmin_env", -2)
+        xmax_env = static_params.get("xmax_env", 2)
+        ymin_env = static_params.get("ymin_env", -2)
+        ymax_env = static_params.get("ymax_env", 2)
+        pts_x = points_all[:, :, 0]
+        pts_y = points_all[:, :, 1]
+        inside_pt = (pts_x >= xmin_env) & (pts_x <= xmax_env) & \
+                    (pts_y >= ymin_env) & (pts_y <= ymax_env)
+        inside_seg = inside_pt[:, :-1] & inside_pt[:, 1:]
+        h_workspace = np.sum(~inside_seg, axis=1) * 1000 * 0.01
+
+        # ========== Collision (per individual, Shapely-dependent) ==========
+        h_obs = np.zeros(pop.shape[0])
+        expanded_obs = static_params["expanded_obstacles"]
+        is_circle = (
+            len(expanded_obs) > 0 and
+            isinstance(expanded_obs[0], (tuple, list)) and
+            len(expanded_obs[0]) == 3
+        )
+        for i in range(pop.shape[0]):
+            pts = points_all[i]
             if is_circle:
-                centers = np.array([[c[0], c[1]] for c in expanded_obs])
-                radii = np.array([c[2] for c in expanded_obs])
-                dists = check_collisions_cylinderBT(points_curve_i,
-                                                     expanded_obs, r)
+                dists = check_collisions_cylinderBT(pts, expanded_obs, r)
                 n_segs = len(dists)
                 inside_len = np.sum(dists) if n_segs > 0 else 0.0
             else:
                 n_segs, inside_len, _, _ = detailed_collision_with_polygons(
-                    points_curve_i, expanded_obs)
-            h_obs.append(10 * inside_len if n_segs > 0 else 0.0)
-            workspace = static_params["workspace"]
-            pts = points_curve_i
-            inside_mask = np.array([
-                workspace.contains(LineString([pts[i], pts[i + 1]]))
-                for i in range(len(pts) - 1)
-            ])
-            h_workspace.append(
-                (len(pts) - 1 - np.sum(inside_mask)) * 1000 * 0.01
-            )
-        f = np.array(length)
+                    pts, expanded_obs)
+            h_obs[i] = 10 * inside_len if n_segs > 0 else 0.0
+
+        f = length
         g = np.zeros((pop.shape[0], 1))
         h = np.zeros((pop.shape[0], 3))
-        h[:, 0] = np.array(h_kappa) * f
-        h[:, 1] = np.array(h_obs) * f
-        h[:, 2] = np.array(h_workspace) * f
+        h[:, 0] = h_kappa * f
+        h[:, 1] = h_obs * f
+        h[:, 2] = h_workspace * f
         g[g < 1e-18] = 0
         return f, g, h
 
@@ -392,7 +466,7 @@ class DE2D_NURBS:
                 text = (f'NURBS\nBest Fitness: {agent.log_best_f[iteration]:.4f}\n'
                         f'Best CV: {agent.log_best_CV[iteration]:.4f}')
                 if feasible_iter >= 0:
-                    text += f'\nFeasible after {feasible_iter} iterations'
+                    text += f'\nFeasible after {feasible_iter} generations'
                 ax.text(0.02, 0.98, text, transform=ax.transAxes,
                         fontsize=12, verticalalignment='top',
                         bbox=dict(boxstyle='round', facecolor='white',
@@ -466,6 +540,7 @@ class DE2D_NURBS:
             xmin=xmin_pop,
             xmax=xmax_pop,
             max_fes=c.max_fes,
+            n_generations=c.n_generations,
             func=self.individual_cost_function,
             static_params=static_params,
             initial_pop=initial_pop.copy(),
@@ -518,7 +593,7 @@ class DE2D_NURBS:
         ax.set_ylabel('y', fontsize=12)
         ax.tick_params(labelsize=10)
         ax.grid()
-        ax.legend()
+        ax.legend(fontsize=10)
         ax.set_title('Scenario')
         if show:
             plt.show()
@@ -538,6 +613,29 @@ class DE2D_NURBS:
             "knots": knots,
         }
 
+    def plot_convergence(self, figsize=(10, 6)):
+        if self.agent is None:
+            return
+        fig, ax1 = plt.subplots(figsize=figsize)
+        ax1.plot(self.agent.log_best_f, color='blue', label='Best Fitness')
+        ax1.set_xlabel('Generation', fontsize=12)
+        ax1.set_ylabel('Best Fitness', color='blue', fontsize=12)
+        ax1.tick_params(axis='y', labelcolor='blue')
+        ax1.grid()
+        ax2 = ax1.twinx()
+        cv = np.array(self.agent.log_best_CV)
+        cv[cv <= 1e-5] = 0
+        ax2.plot(cv, color='red', label='Best CV', linestyle='--')
+        ax2.set_ylabel('Best CV', color='red', fontsize=12)
+        ax2.tick_params(axis='y', labelcolor='red')
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        ax1.set_title('Convergence')
+        fig.tight_layout()
+        plt.show()
+        return fig, ax1, ax2
+
     def plot_result(self, iteration=-1, show_initial=True, show_info=True):
         fig, ax = plt.subplots(figsize=(10.8, 6))
         self.draw_solutions([self.agent], iteration=iteration, ax=ax,
@@ -546,6 +644,48 @@ class DE2D_NURBS:
                             line_width=self.config.line_width)
         plt.show()
         return ax
+
+    def plot_curvature(self, iteration=-1, ax=None, figsize=(8, 4),
+                       nsampling=None):
+        if self.agent is None:
+            return None
+
+        if iteration < 0:
+            iteration = len(self.agent.log_best_f) + iteration
+
+        kappa_max = self.agent.static_params["kappa_max"]
+        solution = self.agent.log_population[iteration][0]
+        ns = nsampling or self.config.nsampling #max(200, self.config.nsampling * 5)
+        pts, _, _, _, _, _ = self.get_points_from_solution(
+            self.agent, solution, nsampling=ns)
+
+        curvature = self.get_curvature_diff(pts)
+
+        diff = np.diff(pts, axis=0)
+        seg_lengths = np.linalg.norm(diff, axis=1)
+        arc_length = np.zeros(len(pts))
+        arc_length[1:] = np.cumsum(seg_lengths)
+
+        show = ax is None
+        if show:
+            fig, ax = plt.subplots(figsize=figsize)
+
+        ax.plot(arc_length, curvature, 'b-', linewidth=1.5,
+                label='Curvature')
+        ax.axhline(y=kappa_max, color='r', linestyle='--', linewidth=1.5,
+                   label=rf'$\kappa_{{\mathrm{{max}}}}$ = {kappa_max}')
+
+        ax.set_xlabel('Arc length', fontsize=12)
+        ax.set_ylabel('Curvature', fontsize=12)
+        ax.set_title(f'Curvature (generation {iteration})', fontsize=14)
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+        fig = ax.figure
+        if show:
+            fig.tight_layout()
+            plt.show()
+        return fig, ax
 
     def save_result(self, filepath=None, num_points=4000):
         import os

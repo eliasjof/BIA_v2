@@ -283,7 +283,7 @@ def check_collisions_cylinderBT(points_curve, cylinders, r=0.1):
         
         for i, dist_i in enumerate(dist):        
             idx = ii[i]
-            if dist_i < cylinders[idx][2] + r:  # Check if point is inside cylinder            
+            if dist_i < cylinders[idx][2]:  # Check if point is inside cylinder            
                 dobs.append(dist_i)    
     return dobs
 
