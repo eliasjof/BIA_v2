@@ -1,7 +1,8 @@
 import random
 import numpy as np
+import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, Point
-from __utils import generate_circles_fast, generate_polygons
+from __utils import generate_circles_fast, generate_polygons, draw_disc
 
 
 class ScenarioConfig:
@@ -12,7 +13,10 @@ class ScenarioConfig:
         radius                 : raio do robô.
         kappa_max              : curvatura máxima permitida.
         lambd                  : comprimento de referência para os vetores
-                                 tangentes inicial/final (default = radius*2).
+                                 tangentes inicial/final. Não usado diretamente;
+                                 prefira lambda_i e lambda_f.
+        lambda_i / lambda_f    : magnitude dos vetores tangentes inicial/final
+                                 para a curva NURBS (default = radius*2).
         degree                 : grau da curva NURBS.
         num_free_ctrlpts       : número de pontos de controle livres.
         num_static_ctrlpts     : número de pontos de controle fixos
@@ -51,6 +55,8 @@ class ScenarioConfig:
         self.radius = 0.15 / 2
         self.kappa_max = 8.0
         self.lambd = self.radius * 2
+        self.lambda_i = self.radius * 2
+        self.lambda_f = self.radius * 2
         self.degree = 5
         self.num_free_ctrlpts = 4
         self.num_static_ctrlpts = 2 * self.degree + 4
@@ -132,3 +138,43 @@ class ScenarioConfig:
                 poly.buffer(self.radius) for poly in self.obs
             ]
         self._setup_done = True
+
+    def draw_scenario(self, ax=None, show=True):
+        self.setup()
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 6))
+        x, y = self.workspace.exterior.xy
+        ax.plot(x, y, 'k-', linewidth=self.line_width, label='Workspace')
+        is_circle = (len(self.obs) > 0 and
+                     isinstance(self.obs[0], (tuple, list)) and
+                     len(self.obs[0]) == 3)
+        if is_circle:
+            for ob in self.obs:
+                draw_disc(p=np.array([ob[0], ob[1]]), r=ob[2],
+                          ax=ax, color='gray', alpha=0.5)
+            for ob in self.expanded_obs:
+                draw_disc(p=np.array([ob[0], ob[1]]), r=ob[2],
+                          ax=ax, color='gray', alpha=0.3)
+        else:
+            for poly in self.obs:
+                x, y = poly.exterior.xy
+                ax.fill(x, y, alpha=0.5, edgecolor='k',
+                        linewidth=self.line_width)
+            for poly in self.expanded_obs:
+                x, y = poly.exterior.xy
+                ax.fill(x, y, alpha=0.3, edgecolor='k',
+                        linewidth=self.line_width)
+        ax.plot(self.start[0], self.start[1], 'go', markersize=8, label='Start')
+        ax.plot(self.goal[0], self.goal[1], 'ro', markersize=8, label='Goal')
+        ax.set_xlim(self.xmin, self.xmax)
+        ax.set_ylim(self.ymin, self.ymax)
+        ax.set_aspect('equal')
+        ax.set_xlabel('x', fontsize=12)
+        ax.set_ylabel('y', fontsize=12)
+        ax.tick_params(labelsize=10)
+        ax.grid()
+        ax.legend(fontsize=10)
+        ax.set_title('Scenario')
+        if show:
+            plt.show()
+        return ax

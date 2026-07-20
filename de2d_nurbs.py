@@ -20,28 +20,28 @@ class DE2D_NURBS:
 
     @staticmethod
     def generate_straightline(pti, ptf, gammai=0, gammaf=0, thi=0, thf=0,
-                               num_points=5, vi=0.01, vf=0.01,
+                               num_points=5, lambda_i=0.01, lambda_f=0.01,
                                dimension=2, degree=5):
-        dxi = np.cos(gammai) * vi
-        dyi = np.sin(gammai) * vi
+        dxi = np.cos(gammai) * lambda_i
+        dyi = np.sin(gammai) * lambda_i
         pti2x = pti[0] + dxi * 2 / 3
         pti2y = pti[1] + dyi * 2 / 3
         if dimension == 3:
-            pti2z = pti[2] + np.tan(thi) * vi * 2 / 3
+            pti2z = pti[2] + np.tan(thi) * lambda_i * 2 / 3
         pti3x = pti2x + dxi * 1 / 3
         pti3y = pti2y + dyi * 1 / 3
         if dimension == 3:
-            pti3z = pti2z + np.tan(thi) * vi * 1 / 3
-        dxf = np.cos(gammaf) * vf
-        dyf = np.sin(gammaf) * vf
+            pti3z = pti2z + np.tan(thi) * lambda_i * 1 / 3
+        dxf = np.cos(gammaf) * lambda_f
+        dyf = np.sin(gammaf) * lambda_f
         ptf2x = ptf[0] - dxf * 2 / 3
         ptf2y = ptf[1] - dyf * 2 / 3
         if dimension == 3:
-            ptf2z = ptf[2] - np.tan(thf) * vf * 2 / 3
+            ptf2z = ptf[2] - np.tan(thf) * lambda_f * 2 / 3
         ptf3x = ptf2x - dxf * 1 / 3
         ptf3y = ptf2y - dyf * 1 / 3
         if dimension == 3:
-            ptf3z = ptf2z - np.tan(thf) * vf * 1 / 3
+            ptf3z = ptf2z - np.tan(thf) * lambda_f * 1 / 3
         line_points = []
         for _ in range(degree):
             line_points.extend(pti)
@@ -86,7 +86,7 @@ class DE2D_NURBS:
         initial_ctrlpts, _ = self.generate_straightline(
             p_start, p_goal, gammai=th_start, gammaf=th_goal,
             thi=0, thf=0, num_points=c.num_free_ctrlpts,
-            vi=c.lambd, vf=c.lambd, dimension=c.space_dim, degree=c.degree)
+            lambda_i=c.lambda_i, lambda_f=c.lambda_f, dimension=c.space_dim, degree=c.degree)
         n_total = c.num_free_ctrlpts + c.num_static_ctrlpts
         return {
             "th_start": th_start,

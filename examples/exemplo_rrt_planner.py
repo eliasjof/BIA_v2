@@ -9,155 +9,216 @@ from rrt_based.rrt_planner import RRTPlanner
 from pso2d_nurbs import PSO2D_NURBS
 
 
-def exemplo_rrt_star():
-    """RRT* classico — funciona em cenarios apertados (sem orientacao)."""
-    print("=" * 60)
-    print("RRT* CLASSICO (geometrico, sem orientacao)")
-    print("=" * 60)
-
-    config = ScenarioConfig()
-    config.obs_list = [(0.6883004767862384, 0.3022825881539657, 0.14464214762976454),(-1.0917736086156131, -0.1126768217023627, 0.2784359135409691),(-0.9002903939515345, 0.26820105644434156, 0.10530719393677274),(-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),(-0.4346374873469, -0.5239275669138156, 0.23962787899764537),(1.0290397406091127, 0.18269405408555595, 0.11934327536669281),(-0.3171168234468903, 0.07341651282804262, 0.29462315279587414)]
-    config.start = np.array([-1.5, -1.0])
-    config.goal = np.array([1.5, 1.0])
-    config.th_start = 0.0
-    config.th_goal = 0.0
-    config.radius = 0.073
-    config.kappa_max = 1/0.73
-
+def exemplo_rrt_star(config, ax=None, curv_ax=None):
+    print("RRT* CLASSICO")
     p = RRTPlanner(config, 'rrt_star',
                    max_iter=2000, expand_dis=0.2,
                    path_resolution=0.02, goal_sample_rate=30)
     p.run(animation=False)
     path = p.get_best_path()
-
-    print(f"Caminho: {'OK' if path else 'FAIL'}")
-
+    print(f"  {'OK' if path else 'FAIL'}")
     smooth = p.smooth_path()
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    p.draw_scenario(ax=axes[0], show=False)
+    own_fig = ax is None
+    if own_fig:
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        ax, curv_ax = axes[0], axes[1]
+        p.draw_scenario(ax=ax, show=False)
     if path:
         raw = np.array(path)
-        axes[0].plot(raw[:, 0], raw[:, 1], 'b-', lw=1.5, alpha=0.4, label='RRT* (raw)')
-        axes[0].plot(smooth[:, 0], smooth[:, 1], 'r-', lw=2, label='B-Spline')
-    axes[0].set_title("RRT* Classico")
-    axes[0].legend(fontsize=10)
-    p.plot_curvature(smoothed=False, ax=axes[1])
-    axes[1].set_title("Curvatura (raw)")
-    p.plot_curvature(smoothed=True, ax=axes[2])
-    axes[2].set_title("Curvatura (raw + smoothed)")
-    plt.tight_layout()
-    plt.show()
+        ax.plot(raw[:, 0], raw[:, 1], 'b-', lw=1.5, alpha=0.4, label='RRT* (raw)')
+        ax.plot(smooth[:, 0], smooth[:, 1], 'r-', lw=2, label='B-Spline')
+    ax.legend(fontsize=10)
+    ax.set_title("RRT* Classico")
+    if own_fig:
+        p.plot_curvature(smoothed=False, ax=curv_ax)
+        p.plot_curvature(smoothed=True, ax=axes[2])
+        axes[1].set_title("Curvatura (raw)")
+        axes[2].set_title("Curvatura (raw + smoothed)")
+        fig.tight_layout()
+        return fig
+    return None
 
 
-def exemplo_rrt_star_dubins():
-    
-
-    config = ScenarioConfig()
-    # config.obs_list = [
-    #     [-0.8, -0.2, 0.4],
-    #     [0.0, 0.6, 0.4],
-    #     [0.0, -0.9, 0.4],
-    #     [0.8, 0.2, 0.4]
-    # ]
-    config.obs_list = [(-1.0917736086156131, 0.1126768217023627, 0.2784359135409691),(-1.29002903939515345, 0.26820105644434156, -0.10530719393677274),(-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),(-0.4346374873469, -0.5239275669138156, 0.23962787899764537)]
-    # config.obs_list = []
-    config.scale_x = [-2.1, 1.6]
-    config.scale_y = [-2.1, 1.6]
-    config.start = np.array([-1.4, -0.8])
-    config.goal = np.array([1.4, 0.8])
-    config.th_start = np.deg2rad(0)
-    config.th_goal = np.deg2rad(0)
-    config.radius = 0.073
-    config.kappa_max = 1/0.73
-
+def exemplo_rrt_star_dubins(config, ax=None, curv_ax=None):
+    print("RRT* DUBINS")
     p = RRTPlanner(
-    config,
-    'rrt_star_dubins',
-    random_yaw_strategy='toward_goal',
-    max_iter=900,
-    connect_circle_dist=8.5,
-    step_size=0.02,
-    goal_sample_rate=40,
-    goal_xy_th=0.10,
-    goal_yaw_th=np.deg2rad(5),
-    rand_area_x=[-2.0, 2],
-    rand_area_y=[-2, 2]
-)
-    p.run(animation=True)
-    path = p.get_best_path()
-
-    print(f"Caminho: {'OK' if path else 'FAIL'}")
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    p.draw_scenario(ax=axes[0], show=False)
-    if path:
-        a = np.array(path)
-        comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
-        axes[0].plot(a[:, 0], a[:, 1], 'r-', lw=2, label=f'RRT* Dubins ({comp:.2f}m)')
-        axes[0].legend(fontsize=10)
-    axes[0].set_title("RRT* Dubins")
-    axes[0].axis([-3,3,-3,3])
-    p.plot_curvature(ax=axes[1])   
-    axes[1].set_title("Curvatura")
-    plt.tight_layout()    
-    plt.show()
-
-
-def exemplo_bit_star_dubins():
-    print("=" * 60)
-    print("BIT* DUBINS (Batch Informed Trees + Dubins)")
-    print("=" * 60)
-
-    config = ScenarioConfig()
-    config.obs_list = [(0.6883004767862384, 0.3022825881539657, 0.14464214762976454),(-1.0917736086156131, -0.1126768217023627, 0.2784359135409691),(-0.9002903939515345, 0.26820105644434156, 0.10530719393677274),(-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),(-0.4346374873469, -0.5239275669138156, 0.23962787899764537),(1.0290397406091127, 0.18269405408555595, 0.11934327536669281),(-0.3171168234468903, 0.07341651282804262, 0.29462315279587414)]
-    config.start = np.array([-1.4, -0.8])
-    config.goal = np.array([1.4, 0.8])
-    config.th_start = np.deg2rad(0)
-    config.th_goal = np.deg2rad(0)
-    config.radius = 0.073
-    config.kappa_max = 2#1 / 0.73
-
-    p = RRTPlanner(
-        config,
-        'bit_star_dubins',
+        config, 'rrt_star_dubins',
         random_yaw_strategy='toward_goal',
-        max_iter=1500,
-        connect_circle_dist=4.5,
-        step_size=0.05,
-        goal_sample_rate=20,
-        batch_size=200,
-        goal_xy_th=0.10,
-        goal_yaw_th=np.deg2rad(5),
-        rand_area_x=[-2.0, 2],
-        rand_area_y=[-2, 2],
+        max_iter=900, connect_circle_dist=8.5,
+        step_size=0.02, goal_sample_rate=40,
+        goal_xy_th=0.10, goal_yaw_th=np.deg2rad(5),
     )
     p.run(animation=False)
     path = p.get_best_path()
+    print(f"  {'OK' if path else 'FAIL'}")
+    own_fig = ax is None
+    if not path:
+        print("  FAIL")
+        if own_fig:
+            return fig
+        return None
+    a = np.array(path)
+    if own_fig:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax, curv_ax = axes
+        p.draw_scenario(ax=ax, show=False)
+    comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
+    style = dict(color='#F44336', ls='-', lw=1.5, label=f'RRT* Dubins ({comp:.2f}m)')
+    ax.plot(a[:, 0], a[:, 1], **style)
+    ax.legend(fontsize=10)
+    ax.set_title("RRT* Dubins")
+    if own_fig:
+        ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
+        fig.tight_layout()
+        return fig
+    return p, a
 
-    print(f"Caminho: {'OK' if path else 'FAIL'}")
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    p.draw_scenario(ax=axes[0], show=False)
-    if path:
-        a = np.array(path)
-        comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
-        axes[0].plot(a[:, 0], a[:, 1], 'm-', lw=2, label=f'BIT* Dubins ({comp:.2f}m)')
-        axes[0].legend(fontsize=10)
-    axes[0].set_title("BIT* Dubins")
-    axes[0].axis([config.xmin, config.xmax, config.ymin, config.ymax])
-    p.plot_curvature(ax=axes[1])
-    axes[1].set_title("Curvatura")
-    plt.tight_layout()
-    plt.show()
+def exemplo_bit_star_dubins(config, ax=None, curv_ax=None):
+    print("BIT* DUBINS")
+    p = RRTPlanner(
+        config, 'bit_star_dubins',
+        random_yaw_strategy='toward_goal',
+        max_iter=1500, connect_circle_dist=4.5,
+        step_size=0.05, goal_sample_rate=20,
+        batch_size=200, goal_xy_th=0.10,
+        goal_yaw_th=np.deg2rad(5),
+    )
+    p.run(animation=False)
+    path = p.get_best_path()
+    print(f"  {'OK' if path else 'FAIL'}")
+    own_fig = ax is None
+    if not path:
+        print("  FAIL")
+        if own_fig:
+            return fig
+        return None
+    a = np.array(path)
+    if own_fig:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax, curv_ax = axes
+        p.draw_scenario(ax=ax, show=False)
+    comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
+    style = dict(color='#9C27B0', ls='-.', lw=2.0, label=f'BIT* Dubins ({comp:.2f}m)')
+    ax.plot(a[:, 0], a[:, 1], **style)
+    ax.legend(fontsize=10)
+    ax.set_title("BIT* Dubins")
+    if own_fig:
+        ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
+        fig.tight_layout()
+        return fig
+    return p, a
 
 
-def exemplo_de2d_nurbs():
-    print("=" * 60)
-    print("DE2D_NURBS (LSHADE-COP + NURBS path optimization)")
-    print("=" * 60)
+def exemplo_de2d_nurbs(config, ax=None, curv_ax=None):
+    print("DE2D_NURBS")
+    from de2d_nurbs import DE2D_NURBS
+    de = DE2D_NURBS(config)
+    de.run()
+    result = de.get_best_path()
+    if result is None:
+        print("  FAIL")
+        return None
+    pts = result["points"]
+    comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
+    print(f"  OK  comp={comp:.2f}m")
+    own_fig = ax is None
+    if own_fig:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax, curv_ax = axes
+        de.draw_scenario(ax=ax, show=False)
+    style = dict(color='#4CAF50', ls='-', lw=2.5, label=f'DE2D_NURBS ({comp:.2f}m)')
+    ax.plot(pts[:, 0], pts[:, 1], **style)
+    ax.legend(fontsize=10)
+    ax.set_title("DE2D_NURBS")
+    if own_fig:
+        ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
+        fig.tight_layout()
+        return fig
+    return de, pts
 
+
+def exemplo_pso2d_nurbs(config, ax=None, curv_ax=None):
+    print("PSO2D_NURBS")
+    pso = PSO2D_NURBS(config)
+    pso.run()
+    result = pso.get_best_path()
+    if result is None:
+        print("  FAIL")
+        return None
+    pts = result["points"]
+    comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
+    print(f"  OK  comp={comp:.2f}m")
+    own_fig = ax is None
+    if own_fig:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax, curv_ax = axes
+        pso.draw_scenario(ax=ax, show=False)
+    style = dict(color='#795548', ls=':', lw=2.5, label=f'PSO2D_NURBS ({comp:.2f}m)')
+    ax.plot(pts[:, 0], pts[:, 1], **style)
+    ax.legend(fontsize=10)
+    ax.set_title("PSO2D_NURBS")
+    if own_fig:
+        ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
+        fig.tight_layout()
+        return fig
+    return pso, pts
+
+
+def exemplo_bit_star_theta(config, ax=None, curv_ax=None):
+    print("BIT* THETA")
+    p = RRTPlanner(
+        config, 'bit_star_theta',
+        random_yaw_strategy='toward_goal',
+        max_iter=1500, connect_circle_dist=4.5,
+        step_size=0.05, goal_sample_rate=20,
+        batch_size=200, goal_xy_th=0.10,
+        goal_yaw_th=np.deg2rad(5),
+    )
+    p.run(animation=False)
+    path = p.get_best_path()
+    print(f"  {'OK' if path else 'FAIL'}")
+    own_fig = ax is None
+    if not path:
+        print("  FAIL")
+        if own_fig:
+            return fig
+        return None
+    a = np.array(path)
+    if own_fig:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax, curv_ax = axes
+        p.draw_scenario(ax=ax, show=False)
+    comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
+    style = dict(color='#E91E63', ls='--', lw=2.0, label=f'BIT* Theta ({comp:.2f}m)')
+    ax.plot(a[:, 0], a[:, 1], **style)
+    ax.legend(fontsize=10)
+    ax.set_title("BIT* Theta")
+    if own_fig:
+        ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
+        fig.tight_layout()
+        return fig
+    return p, a
+
+
+def _compute_curvature_and_arc(pts):
+    dx = np.gradient(pts[:, 0])
+    dy = np.gradient(pts[:, 1])
+    ddx = np.gradient(dx)
+    ddy = np.gradient(dy)
+    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+    diff = np.diff(pts, axis=0)
+    seg = np.linalg.norm(diff, axis=1)
+    s = np.zeros(len(pts))
+    s[1:] = np.cumsum(seg)
+    return k, s
+
+
+if __name__ == '__main__':
     config = ScenarioConfig()
-    config.obs_list = [(-1.0917736086156131, 0.1126768217023627, 0.2784359135409691),(-1.29002903939515345, 0.26820105644434156, -0.10530719393677274),(-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),(-0.4346374873469, -0.5239275669138156, 0.23962787899764537)]
+    config.seed = 10
+    config.obstacle_type = "circles"
+    config.occupancy_rate = 0.1
     config.start = np.array([-1.4, -0.8])
     config.goal = np.array([1.4, 0.8])
     config.th_start = np.deg2rad(0)
@@ -172,82 +233,82 @@ def exemplo_de2d_nurbs():
     config.xmax = 2.0
     config.ymin = -2.0
     config.ymax = 2.0
+    config.lambda_f = config.radius
+    config.lambda_i = config.radius
 
-    from de2d_nurbs import DE2D_NURBS
-    de = DE2D_NURBS(config)
-    de.run()
-    result = de.get_best_path()
+    fig, ax = plt.subplots(1, 1, figsize=(16, 6))
+    # Desenha o cenário uma vez
+    config.draw_scenario(ax=ax, show=True)
 
-    if result is None:
-        print("Caminho: FAIL")
-        return
+    # ── Cada figura separada (True) ou um único figure comparativo (False) ──
+    MODO_FIGURAS_SEPARADAS = False
 
-    pts = result["points"]
-    comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
-    print(f"Caminho: OK  comp={comp:.2f}m")
+    planners = [
+        exemplo_bit_star_dubins,
+        exemplo_de2d_nurbs,
+        exemplo_pso2d_nurbs,
+        # exemplo_rrt_star,
+        # exemplo_rrt_star_dubins,
+        # exemplo_bit_star_theta,
+    ]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    de.draw_scenario(ax=axes[0], show=False)
-    axes[0].plot(pts[:, 0], pts[:, 1], color='#4CAF50', lw=2.5, label=f'DE2D_NURBS ({comp:.2f}m)')
-    axes[0].legend(fontsize=10)
-    axes[0].set_title("DE2D_NURBS")
-    axes[0].axis([config.xmin, config.xmax, config.ymin, config.ymax])
-    de.plot_curvature(ax=axes[1])
-    axes[1].set_title("Curvatura")
-    plt.tight_layout()
-    plt.show()
+    # Cores que combinam com as cores dos paths
+    planner_colors = {
+        exemplo_bit_star_dubins: '#9C27B0',
+        exemplo_de2d_nurbs:      '#4CAF50',
+        exemplo_pso2d_nurbs:     '#795548',
+        exemplo_rrt_star:        '#2196F3',
+        exemplo_rrt_star_dubins: '#F44336',
+        exemplo_bit_star_theta:  '#E91E63',
+    }
 
+    if MODO_FIGURAS_SEPARADAS:
+        figs = [p(config) for p in planners]
+        figs = [f for f in figs if f is not None]
+    else:
+        fig, (ax, curv_ax) = plt.subplots(1, 2, figsize=(16, 6))
+        # Desenha o cenário uma vez
+        config.draw_scenario(ax=ax, show=False)
+        ax.legend_.remove()
 
-def exemplo_pso2d_nurbs():
-    print("=" * 60)
-    print("PSO2D_NURBS (PSO + NURBS path optimization)")
-    print("=" * 60)
+        # Executa os planejadores e coleta resultados
+        results = []
+        for fn in planners:
+            if fn == exemplo_pso2d_nurbs:
+                config.n_generations = 200
+                config.pop_size = 30
+            elif fn == exemplo_de2d_nurbs:
+                config.n_generations = 200
+                config.pop_size = 100
+            
+            r = fn(config, ax=ax)
+            if r is not None:
+                results.append((fn, r[0], r[1]))
 
-    config = ScenarioConfig()
-    config.obs_list = [(-1.0917736086156131, 0.1126768217023627, 0.2784359135409691),(-1.29002903939515345, 0.26820105644434156, -0.10530719393677274),(-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),(-0.4346374873469, -0.5239275669138156, 0.23962787899764537)]
-    config.start = np.array([-1.4, -0.8])
-    config.goal = np.array([1.4, 0.8])
-    config.th_start = np.deg2rad(0)
-    config.th_goal = np.deg2rad(0)
-    config.radius = 0.073
-    config.kappa_max = 1 / 0.73
-    config.n_generations = 400
-    config.pop_size = 50
-    config.scale_x = 2.0
-    config.scale_y = 2.0
-    config.xmin = -2.0
-    config.xmax = 2.0
-    config.ymin = -2.0
-    config.ymax = 2.0
+        ax.set_xlim(config.xmin, config.xmax)
+        ax.set_ylim(config.ymin, config.ymax)
+        ax.set_aspect('equal')
+        # ax.set_title("Comparação de Planejadores")
 
-    
-    pso = PSO2D_NURBS(config)
-    pso.run()
-    result = pso.get_best_path()
+        # Curvatura: analítica para Dubins, numérica para os demais
+        for i, (fn, planner, pts) in enumerate(results):
+            color = planner_colors.get(fn, f'C{i}')
+            inner = getattr(planner, 'planner', None)
+            if inner is not None and hasattr(inner, 'get_curvature_analytical'):
+                k, s = inner.get_curvature_analytical()
+            else:
+                k, s = _compute_curvature_and_arc(pts)
+            label = fn.__name__.replace('exemplo_', '').replace('_', ' ')
+            curv_ax.plot(s, k, color=color, linewidth=1.5, label=label)
+        curv_ax.axhline(y=config.kappa_max, color='r', linestyle='--',
+                        linewidth=1.5, label=rf'$\kappa_{{\mathrm{{max}}}}$ = {config.kappa_max}')
+        curv_ax.set_xlabel('Arc length', fontsize=12)
+        curv_ax.set_ylabel('Curvature', fontsize=12)
+        curv_ax.set_title("Curvatura", fontsize=14)
+        curv_ax.legend(fontsize=10)
+        curv_ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        figs = [fig]
 
-    if result is None:
-        print("Caminho: FAIL")
-        return
-
-    pts = result["points"]
-    comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
-    print(f"Caminho: OK  comp={comp:.2f}m")
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    pso.draw_scenario(ax=axes[0], show=False)
-    axes[0].plot(pts[:, 0], pts[:, 1], color='#795548', lw=2.5, label=f'PSO2D_NURBS ({comp:.2f}m)')
-    axes[0].legend(fontsize=10)
-    axes[0].set_title("PSO2D_NURBS")
-    axes[0].axis([config.xmin, config.xmax, config.ymin, config.ymax])
-    pso.plot_curvature(ax=axes[1])
-    axes[1].set_title("Curvatura")
-    plt.tight_layout()
-    plt.show()
-
-
-if __name__ == '__main__':
-    # exemplo_rrt_star()
-    # exemplo_rrt_star_dubins()
-    # exemplo_bit_star_dubins()
-    exemplo_de2d_nurbs()
-    exemplo_pso2d_nurbs()
+    if figs:
+        plt.show()

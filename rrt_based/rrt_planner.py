@@ -13,6 +13,7 @@ sys.path.append(str(pathlib.Path(__file__).parent))
 sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
 from scenario_config import ScenarioConfig
 from bit_star_dubins import BITStarDubins
+from bit_star_theta import BITStarTheta
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -913,12 +914,16 @@ class RRTPlanner:
             robot_radius=c.radius,
         )
 
-        if self.planner_type in ('rrt_star_dubins', 'bit_star_dubins'):
-            dubins_curvature = c.kappa_max
-            extra = dict(max_iter=1000, connect_circle_dist=4.5,
-                         dubins_curvature=dubins_curvature)
-            if self.planner_type == 'bit_star_dubins':
+        if self.planner_type in ('rrt_star_dubins', 'bit_star_dubins', 'bit_star_theta'):
+            extra = dict(max_iter=1000, connect_circle_dist=4.5)
+            if self.planner_type == 'rrt_star_dubins':
+                pass
+            elif self.planner_type == 'bit_star_dubins':
                 extra['batch_size'] = 200
+            else:
+                extra['batch_size'] = 200
+            if self.planner_type in ('rrt_star_dubins', 'bit_star_dubins'):
+                extra['kappa_max'] = c.kappa_max
             base.update(extra)
 
         base.update(self._planner_kwargs)
@@ -944,7 +949,7 @@ class RRTPlanner:
                 step_size=path_resolution,
                 random_yaw_strategy=p.get('random_yaw_strategy', 'uniform'),
             )
-            self.planner.curvature = p['dubins_curvature']
+            self.planner.curvature = p['kappa_max']
             self.planner.goal_sample_rate = p['goal_sample_rate']
             self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
             self.planner.goal_yaw_th = p.get('goal_yaw_th', np.deg2rad(60))
@@ -964,7 +969,27 @@ class RRTPlanner:
                 robot_radius=p['robot_radius'],
                 step_size=path_resolution,
                 batch_size=p.get('batch_size', 200),
-                curvature=dubins_curvature,
+                curvature=p['kappa_max'],
+                random_yaw_strategy=p.get('random_yaw_strategy', 'toward_goal'),
+            )
+            self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
+            self.planner.goal_yaw_th = p.get('goal_yaw_th', np.deg2rad(60))
+        elif self.planner_type == 'bit_star_theta':
+            start = [float(c.start[0]), float(c.start[1]), float(c.th_start)]
+            goal = [float(c.goal[0]), float(c.goal[1]), float(c.th_goal)]
+            path_resolution = p.get('path_resolution', 0.05)
+            self.planner = BITStarTheta(
+                start=start, goal=goal,
+                obstacle_list=obstacle_list,
+                rand_area=[c.xmin, c.xmax],
+                rand_area_x=[c.xmin, c.xmax],
+                rand_area_y=[c.ymin, c.ymax],
+                goal_sample_rate=p['goal_sample_rate'],
+                max_iter=p['max_iter'],
+                connect_circle_dist=p.get('connect_circle_dist', 4.5),
+                robot_radius=p['robot_radius'],
+                step_size=path_resolution,
+                batch_size=p.get('batch_size', 200),
                 random_yaw_strategy=p.get('random_yaw_strategy', 'toward_goal'),
             )
             self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
