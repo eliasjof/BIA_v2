@@ -372,7 +372,7 @@ class RRT:
                      "-k")
         plt.plot(self.start.x, self.start.y, "xr")
         plt.plot(self.end.x, self.end.y, "xr")
-        plt.axis("equal")
+        # plt.axis("equal")
         plt.axis([self.min_rand, self.max_rand, self.min_rand, self.max_rand])
         plt.grid(True)
         plt.pause(0.01)
@@ -542,17 +542,54 @@ class RRTStar(RRT):
                     near_node.cost = cost
 
     def search_best_goal_node(self):
-        goal_indexes = []
-        for (i, node) in enumerate(self.node_list):
-            if self.calc_dist_to_goal(node.x, node.y) <= self.expand_dis:
-                goal_indexes.append(i)
-        if not goal_indexes:
+
+        candidates = []
+
+        for i, node in enumerate(self.node_list):
+
+            d = self.calc_dist_to_goal(node.x, node.y)
+
+            if d > self.goal_xy_th:
+                continue
+
+            yaw_diff = abs(angle_mod(node.yaw - self.end.yaw))
+
+            if yaw_diff > self.goal_yaw_th:
+                continue
+
+            px, py, _, _, course_lengths = plan_dubins_path(
+                node.x,
+                node.y,
+                node.yaw,
+                self.end.x,
+                self.end.y,
+                self.end.yaw,
+                self.curvature,
+                step_size=self.step_size
+            )
+
+            if len(px) <= 1:
+                continue
+
+            temp = RRT.Node(0, 0)
+            temp.path_x = px
+            temp.path_y = py
+
+            if not self.check_collision(
+                temp,
+                self.obstacle_list,
+                self.robot_radius
+            ):
+                continue
+
+            total_cost = node.cost + sum(abs(c) for c in course_lengths)
+
+            candidates.append((i, total_cost))
+
+        if not candidates:
             return None
-        min_cost = min([self.node_list[i].cost for i in goal_indexes])
-        for i in goal_indexes:
-            if self.node_list[i].cost == min_cost:
-                return i
-        return None
+
+        return min(candidates, key=lambda x: x[1])[0]
 
     def generate_final_course(self, goal_index):
         path = [[self.end.x, self.end.y]]
@@ -607,11 +644,20 @@ class RRTStarDubins(RRTStar):
     def __init__(self, start, goal, obstacle_list, rand_area,
                  goal_sample_rate=10, max_iter=200,
                  connect_circle_dist=50.0, robot_radius=0.0,
-                 step_size=0.1):
+                 step_size=0.1, random_yaw_strategy='uniform',
+                 rand_area_x=None, rand_area_y=None):
         self.start = self.Node(start[0], start[1], start[2])
         self.end = self.Node(goal[0], goal[1], goal[2])
-        self.min_rand = rand_area[0]
-        self.max_rand = rand_area[1]
+        if rand_area_x is not None:
+            self.min_rand_x, self.max_rand_x = rand_area_x
+            self.min_rand_y, self.max_rand_y = rand_area_y if rand_area_y is not None else rand_area_x
+            self.min_rand = self.min_rand_x
+            self.max_rand = self.max_rand_x
+        else:
+            self.min_rand = rand_area[0]
+            self.max_rand = rand_area[1]
+            self.min_rand_x = self.min_rand_y = self.min_rand
+            self.max_rand_x = self.max_rand_y = self.max_rand
         self.goal_sample_rate = goal_sample_rate
         self.max_iter = max_iter
         self.obstacle_list = obstacle_list
@@ -622,13 +668,25 @@ class RRTStarDubins(RRTStar):
         self.goal_yaw_th = np.deg2rad(30)
         self.goal_xy_th = self.robot_radius
         self.play_area = None
+        self.random_yaw_strategy = random_yaw_strategy
 
     def planning(self, animation=True, search_until_max_iter=True):
         self.node_list = [self.start]
         for i in range(self.max_iter):
             rnd = self.get_random_node()
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd)
-            new_node = self.steer(self.node_list[nearest_ind], rnd)
+            nearest_node = self.node_list[nearest_ind]
+            # FIX #1: honor `random_yaw_strategy`. Previously `rnd.yaw` (set
+            # in get_random_node according to the chosen strategy) was
+            # discarded and always overwritten with the nearest->rnd
+            # direction, making the strategy parameter a no-op.
+            if self.calc_dist_to_goal(rnd.x, rnd.y) < 1e-10:
+                target_yaw = self.end.yaw
+            elif self.random_yaw_strategy == 'toward_goal':
+                target_yaw = rnd.yaw
+            else:
+                target_yaw = math.atan2(rnd.y - nearest_node.y, rnd.x - nearest_node.x)
+            new_node = self.steer(nearest_node, rnd, target_yaw=target_yaw)
             if self.check_collision(new_node, self.obstacle_list, self.robot_radius):
                 near_indexes = self.find_near_nodes(new_node)
                 new_node = self.choose_parent(new_node, near_indexes)
@@ -636,7 +694,6 @@ class RRTStarDubins(RRTStar):
                     self.node_list.append(new_node)
                     self.rewire(new_node, near_indexes)
             if animation and i % 5 == 0:
-                self.plot_start_goal_arrow()
                 self.draw_graph(rnd)
             if (not search_until_max_iter) and new_node:
                 last_index = self.search_best_goal_node()
@@ -662,6 +719,10 @@ class RRTStarDubins(RRTStar):
         plt.plot(self.end.x, self.end.y, "xr")
         plt.axis([self.min_rand, self.max_rand, self.min_rand, self.max_rand])
         plt.grid(True)
+        # FIX: removed the redundant call to plot_start_goal_arrow() that
+        # used to happen right before draw_graph() in planning(). draw_graph
+        # itself calls plt.clf() and then plot_start_goal_arrow() below, so
+        # the outer call was always wiped out and had zero effect.
         self.plot_start_goal_arrow()
         plt.axis("equal")
         plt.pause(0.01)
@@ -670,11 +731,20 @@ class RRTStarDubins(RRTStar):
         plot_arrow(self.start.x, self.start.y, self.start.yaw)
         plot_arrow(self.end.x, self.end.y, self.end.yaw)
 
-    def steer(self, from_node, to_node):
+    def steer(self, from_node, to_node, target_yaw=None):
+        if target_yaw is None:
+            target_yaw = to_node.yaw
         px, py, pyaw, mode, course_lengths = plan_dubins_path(
             from_node.x, from_node.y, from_node.yaw,
-            to_node.x, to_node.y, to_node.yaw, self.curvature,
+            to_node.x, to_node.y, target_yaw, self.curvature,
             step_size=self.step_size)
+        # FIX #2: guard against a degenerate/invalid Dubins path (e.g. when
+        # from_node and to_node coincide). Without this check a path of
+        # length 1 was silently accepted, letting duplicate/zero-cost nodes
+        # into the tree. This mirrors the reference implementation's
+        # `if len(px) <= 1: return None`.
+        if len(px) <= 1:
+            return None
         new_node = copy.deepcopy(from_node)
         new_node.x = px[-1]
         new_node.y = py[-1]
@@ -689,17 +759,45 @@ class RRTStarDubins(RRTStar):
         return new_node
 
     def calc_new_cost(self, from_node, to_node):
+        # FIX: pass step_size consistently instead of silently falling back
+        # to plan_dubins_path's default (0.1). Doesn't change the resulting
+        # cost value (which only depends on d1/d2/d3, not sampling density)
+        # but keeps behavior consistent with the rest of the class.
         _, _, _, _, course_lengths = plan_dubins_path(
             from_node.x, from_node.y, from_node.yaw,
-            to_node.x, to_node.y, to_node.yaw, self.curvature)
+            to_node.x, to_node.y, to_node.yaw, self.curvature,
+            step_size=self.step_size)
         cost = sum([abs(c) for c in course_lengths])
         return from_node.cost + cost
 
+    def rewire(self, new_node, near_indexes):
+        # FIX: override RRTStar.rewire so that, when a neighbor is rewired
+        # through new_node, its path_yaw/mode/course_lengths are updated
+        # too (the inherited version only updated path_x/path_y, leaving
+        # those attributes stale/inconsistent with the new parent).
+        for i in near_indexes:
+            near_node = self.node_list[i]
+            t_node = self.steer(new_node, near_node)
+            if t_node and self.check_collision(t_node, self.obstacle_list, self.robot_radius):
+                cost = self.calc_new_cost(new_node, near_node)
+                if cost < near_node.cost:
+                    near_node.parent = new_node
+                    near_node.path_x = t_node.path_x
+                    near_node.path_y = t_node.path_y
+                    near_node.path_yaw = t_node.path_yaw
+                    near_node.mode = t_node.mode
+                    near_node.course_lengths = t_node.course_lengths
+                    near_node.cost = cost
+
     def get_random_node(self):
         if random.randint(0, 100) > self.goal_sample_rate:
-            rnd = self.Node(random.uniform(self.min_rand, self.max_rand),
-                            random.uniform(self.min_rand, self.max_rand),
-                            random.uniform(-np.pi, np.pi))
+            x = random.uniform(self.min_rand_x, self.max_rand_x)
+            y = random.uniform(self.min_rand_y, self.max_rand_y)
+            if self.random_yaw_strategy == 'toward_goal':
+                yaw = math.atan2(self.end.y - y, self.end.x - x)
+            else:
+                yaw = random.uniform(-np.pi, np.pi)
+            rnd = self.Node(x, y, yaw)
         else:
             rnd = self.Node(self.end.x, self.end.y, self.end.yaw)
         return rnd
@@ -710,15 +808,20 @@ class RRTStarDubins(RRTStar):
             d = self.calc_dist_to_goal(node.x, node.y)
             if d > self.goal_xy_th:
                 continue
-            if d < 1e-4 and abs(node.yaw - self.end.yaw) < 1e-3:
+            # FIX #3: actually use self.goal_yaw_th (previously configurable
+            # via RRTPlanner.run(goal_yaw_th=...) but never read anywhere).
+            # If the node's yaw is already within the goal yaw tolerance we
+            # accept a zero-extra-cost connection; otherwise we fall back to
+            # computing the exact Dubins connection cost to the goal pose.
+            yaw_diff = abs(angle_mod(node.yaw - self.end.yaw))
+            if yaw_diff <= self.goal_yaw_th:
                 candidates.append((i, node.cost, 0.0))
                 continue
             px, py, _, _, course_lengths = plan_dubins_path(
                 node.x, node.y, node.yaw,
                 self.end.x, self.end.y, self.end.yaw,
-                self.curvature)
+                self.curvature, step_size=self.step_size)
             if len(px) <= 1:
-                candidates.append((i, node.cost, 0.0))
                 continue
             temp = RRT.Node(0, 0)
             temp.path_x = px
@@ -751,15 +854,67 @@ class RRTStarDubins(RRTStar):
                 path.append([n.x, n.y])
 
         d_g = self.calc_dist_to_goal(node.x, node.y)
-        if d_g >= 1e-4 or abs(node.yaw - self.end.yaw) >= 1e-3:
+        yaw_err = abs(angle_mod(node.yaw - self.end.yaw))
+        if d_g >= self.goal_xy_th or yaw_err >= self.goal_yaw_th:
             px, py, _, _, _ = plan_dubins_path(
                 node.x, node.y, node.yaw,
                 self.end.x, self.end.y, self.end.yaw,
-                self.curvature)
+                self.curvature, step_size=self.step_size)
             if len(px) > 1:
                 path.extend([x, y] for x, y in zip(px[1:], py[1:]))
 
         return path
+
+    def get_curvature_analytical(self):
+        best_idx = self.search_best_goal_node()
+        if best_idx is None:
+            return np.array([0.0]), np.array([0.0])
+        node_path = []
+        n = self.node_list[best_idx]
+        while n.parent is not None:
+            node_path.append(n)
+            n = n.parent
+        node_path.append(n)
+        node_path.reverse()
+
+        curvatures = []
+        arc_positions = [0.0]
+
+        for n in node_path[1:]:
+            mode = getattr(n, 'mode', [])
+            lengths = getattr(n, 'course_lengths', [])
+            if not mode or not lengths:
+                continue
+            for m, l in zip(mode, lengths):
+                k = self.curvature if m in ('L', 'R') else 0.0
+                npts = max(1, int(abs(l) / self.step_size))
+                seg_step = abs(l) / npts
+                curvatures.extend([k] * npts)
+                for _ in range(npts):
+                    arc_positions.append(arc_positions[-1] + seg_step)
+
+        node = node_path[-1]
+        d_g = self.calc_dist_to_goal(node.x, node.y)
+        if d_g >= self.goal_xy_th:
+            _, _, _, mode_f, lengths_f = plan_dubins_path(
+                node.x, node.y, node.yaw,
+                self.end.x, self.end.y, self.end.yaw,
+                self.curvature, step_size=self.step_size)
+            for m, l in zip(mode_f, lengths_f):
+                k = self.curvature if m in ('L', 'R') else 0.0
+                npts = max(1, int(abs(l) / self.step_size))
+                seg_step = abs(l) / npts
+                curvatures.extend([k] * npts)
+                for _ in range(npts):
+                    arc_positions.append(arc_positions[-1] + seg_step)
+
+        s = np.array(arc_positions)
+        k = np.array(curvatures)
+        if len(k) < len(s):
+            k = np.append(k, k[-1] if len(k) > 0 else 0.0)
+        elif len(s) < len(k):
+            s = np.append(s, s[-1])
+        return k[:len(s)], s[:len(k)]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -813,11 +968,14 @@ class RRTPlanner:
                 start=start, goal=goal,
                 obstacle_list=obstacle_list,
                 rand_area=[c.xmin, c.xmax],
+                rand_area_x=[c.xmin, c.xmax],
+                rand_area_y=[c.ymin, c.ymax],
                 goal_sample_rate=p['goal_sample_rate'],
                 max_iter=p['max_iter'],
                 connect_circle_dist=p['connect_circle_dist'],
                 robot_radius=p['robot_radius'],
                 step_size=path_resolution,
+                random_yaw_strategy=p.get('random_yaw_strategy', 'uniform'),
             )
             self.planner.curvature = p['dubins_curvature']
             self.planner.goal_sample_rate = p['goal_sample_rate']
@@ -903,19 +1061,6 @@ class RRTPlanner:
             plt.show()
         return ax
 
-    def plot_result(self, show=True, **plot_kwargs):
-        c = self.config
-        c.setup()
-        fig, ax = plt.subplots(figsize=(10.8, 6))
-        self.draw_scenario(ax=ax, show=False)
-        if self._path is not None:
-            path_arr = np.array(self._path)
-            ax.plot(path_arr[:, 0], path_arr[:, 1], 'b-', linewidth=2,
-                    label=f'{self.planner_type}', **plot_kwargs)
-        ax.set_title(f'{self.planner_type} - Result')
-        if show:
-            plt.show()
-        return ax
     @staticmethod
     def _curvature_and_arc(path):
         dx = np.gradient(path[:, 0])
@@ -949,6 +1094,9 @@ class RRTPlanner:
         return smooth
 
     def plot_result(self, show=True, smoothed=False, **plot_kwargs):
+        # NOTE: the original file defined `plot_result` twice; the second
+        # definition (kept here, with the `smoothed` option) silently
+        # shadowed the first one. Removed the duplicate to avoid confusion.
         c = self.config
         c.setup()
         fig, ax = plt.subplots(figsize=(10.8, 6))
@@ -978,9 +1126,13 @@ class RRTPlanner:
 
         kappa_max = getattr(self.config, 'kappa_max', 8.0)
 
-        # raw path curvature
-        raw = np.array(self._path)
-        k_raw, s_raw = self._curvature_and_arc(raw)
+        # Use analytical curvature when available (Dubins segments),
+        # otherwise fall back to numerical differentiation (RRT/RRTStar)
+        if hasattr(self.planner, 'get_curvature_analytical'):
+            k_raw, s_raw = self.planner.get_curvature_analytical()
+        else:
+            raw = np.array(self._path)
+            k_raw, s_raw = self._curvature_and_arc(raw)
         ax.plot(s_raw, k_raw, 'b-', linewidth=1.5, alpha=0.5,
                 label=f'{self.planner_type} (raw)')
 
@@ -999,6 +1151,9 @@ class RRTPlanner:
         ax.set_title(f'{self.planner_type} - Curvature', fontsize=14)
         ax.legend(fontsize=10)
         ax.grid(True, alpha=0.3)
+        # FIX: `ax.set_axis(...)` doesn't exist in matplotlib (AttributeError)
+        # and the hardcoded [-3,3,-3,3] range didn't match arc-length/curvature
+        # data anyway. Removed; the plot now auto-scales to the data.
         fig = ax.figure
         if show:
             fig.tight_layout()
