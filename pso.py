@@ -83,11 +83,20 @@ class PSO:
 
         self.gbest_pos = model.g_best.solution
         self.gbest_f = model.g_best.target.fitness
-        self.gbest_CV = 0.0
 
-        self.log_best_f = [agent.target.fitness
-                           for agent in model.history.list_global_best]
-        self.log_best_CV = [0.0] * len(self.log_best_f)
+        f, g, h = self.func(np.array([self.gbest_pos]), shared_pop=[],
+                            static_params=self.static_params)
+        cv_arr = self.get_CV(g, h)
+        self.gbest_CV = float(cv_arr[0])
+
+        self.log_best_f = []
+        self.log_best_CV = []
+        for agent in model.history.list_global_best:
+            self.log_best_f.append(agent.target.fitness)
+            f_i, g_i, h_i = self.func(np.array([agent.solution]), shared_pop=[],
+                                      static_params=self.static_params)
+            cv_i = self.get_CV(g_i, h_i)[0]
+            self.log_best_CV.append(float(cv_i))
 
         self.P_c = np.array([agent.solution for agent in model.pop])
         self.log_population = [

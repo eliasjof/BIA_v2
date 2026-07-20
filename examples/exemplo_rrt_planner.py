@@ -9,6 +9,43 @@ from rrt_based.rrt_planner import RRTPlanner
 from pso2d_nurbs import PSO2D_NURBS
 
 
+def _compute_curvature_and_arc(pts):
+    dx = np.gradient(pts[:, 0])
+    dy = np.gradient(pts[:, 1])
+    ddx = np.gradient(dx)
+    ddy = np.gradient(dy)
+    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+    diff = np.diff(pts, axis=0)
+    seg = np.linalg.norm(diff, axis=1)
+    s = np.zeros(len(pts))
+    s[1:] = np.cumsum(seg)
+    return k, s
+
+
+def _check_path_cv(pts, config):
+    from __utils import check_collisions_cylinderBT, detailed_collision_with_polygons
+    k, _ = _compute_curvature_and_arc(pts)
+    kappa_viol = np.sum(np.maximum(0, k - config.kappa_max)**2)
+    ws_viol = np.sum(
+        (pts[:, 0] < config.xmin) | (pts[:, 0] > config.xmax) |
+        (pts[:, 1] < config.ymin) | (pts[:, 1] > config.ymax)
+    )
+    config.setup()
+    obs = config.expanded_obs
+    is_circle = (len(obs) > 0 and isinstance(obs[0], (tuple, list)) and len(obs[0]) == 3)
+    if is_circle:
+        dists = check_collisions_cylinderBT(pts, obs, config.radius)
+        obs_viol = np.sum(dists) if len(dists) > 0 else 0.0
+    else:
+        _, inside_len, _, _ = detailed_collision_with_polygons(pts, obs)
+        obs_viol = inside_len
+    return float(kappa_viol + obs_viol + ws_viol)
+
+
+def _make_feas_info(cv):
+    return {"cv": float(cv), "feasible": float(cv) < 1e-6}
+
+
 def exemplo_rrt_star(config, ax=None, curv_ax=None):
     print("RRT* CLASSICO")
     p = RRTPlanner(config, 'rrt_star',
@@ -63,7 +100,10 @@ def exemplo_rrt_star_dubins(config, ax=None, curv_ax=None):
         ax, curv_ax = axes
         p.draw_scenario(ax=ax, show=False)
     comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
-    style = dict(color='#F44336', ls='-', lw=1.5, label=f'RRT* Dubins ({comp:.2f}m)')
+    cv = _check_path_cv(a, config)
+    fi = _make_feas_info(cv)
+    label = f'RRT* Dubins ({comp:.2f}m) ["{u"\u2713" if fi["feasible"] else u"\u2717"}" CV={cv:.2e}]'
+    style = dict(color='#F44336', ls='-', lw=1.5, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("RRT* Dubins")
@@ -71,7 +111,7 @@ def exemplo_rrt_star_dubins(config, ax=None, curv_ax=None):
         ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
         fig.tight_layout()
         return fig
-    return p, a
+    return p, a, fi
 
 
 def exemplo_bit_star_dubins(config, ax=None, curv_ax=None):
@@ -99,7 +139,10 @@ def exemplo_bit_star_dubins(config, ax=None, curv_ax=None):
         ax, curv_ax = axes
         p.draw_scenario(ax=ax, show=False)
     comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
-    style = dict(color='#9C27B0', ls='-.', lw=2.0, label=f'BIT* Dubins ({comp:.2f}m)')
+    cv = _check_path_cv(a, config)
+    fi = _make_feas_info(cv)
+    label = f'BIT* Dubins ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    style = dict(color='#9C27B0', ls='-.', lw=2.0, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("BIT* Dubins")
@@ -107,7 +150,7 @@ def exemplo_bit_star_dubins(config, ax=None, curv_ax=None):
         ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
         fig.tight_layout()
         return fig
-    return p, a
+    return p, a, fi
 
 
 def exemplo_de2d_nurbs(config, ax=None, curv_ax=None):
@@ -121,13 +164,16 @@ def exemplo_de2d_nurbs(config, ax=None, curv_ax=None):
         return None
     pts = result["points"]
     comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
-    print(f"  OK  comp={comp:.2f}m")
+    cv = float(de.agent.log_best_CV[-1]) if hasattr(de.agent, 'log_best_CV') and len(de.agent.log_best_CV) > 0 else 0.0
+    fi = _make_feas_info(cv)
+    print(f"  OK  comp={comp:.2f}m  CV={cv:.2e}")
     own_fig = ax is None
     if own_fig:
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax, curv_ax = axes
         de.draw_scenario(ax=ax, show=False)
-    style = dict(color='#4CAF50', ls='-', lw=2.5, label=f'DE2D_NURBS ({comp:.2f}m)')
+    label = f'DE2D_NURBS ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    style = dict(color='#4CAF50', ls='-', lw=2.5, label=label)
     ax.plot(pts[:, 0], pts[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("DE2D_NURBS")
@@ -135,7 +181,7 @@ def exemplo_de2d_nurbs(config, ax=None, curv_ax=None):
         ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
         fig.tight_layout()
         return fig
-    return de, pts
+    return de, pts, fi
 
 
 def exemplo_pso2d_nurbs(config, ax=None, curv_ax=None):
@@ -148,13 +194,16 @@ def exemplo_pso2d_nurbs(config, ax=None, curv_ax=None):
         return None
     pts = result["points"]
     comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
-    print(f"  OK  comp={comp:.2f}m")
+    cv = float(pso.agent.log_best_CV[-1]) if hasattr(pso.agent, 'log_best_CV') and len(pso.agent.log_best_CV) > 0 else 0.0
+    fi = _make_feas_info(cv)
+    print(f"  OK  comp={comp:.2f}m  CV={cv:.2e}")
     own_fig = ax is None
     if own_fig:
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax, curv_ax = axes
         pso.draw_scenario(ax=ax, show=False)
-    style = dict(color='#795548', ls=':', lw=2.5, label=f'PSO2D_NURBS ({comp:.2f}m)')
+    label = f'PSO2D_NURBS ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    style = dict(color='#795548', ls=':', lw=2.5, label=label)
     ax.plot(pts[:, 0], pts[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("PSO2D_NURBS")
@@ -162,7 +211,7 @@ def exemplo_pso2d_nurbs(config, ax=None, curv_ax=None):
         ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
         fig.tight_layout()
         return fig
-    return pso, pts
+    return pso, pts, fi
 
 
 def exemplo_bit_star_theta(config, ax=None, curv_ax=None):
@@ -190,7 +239,10 @@ def exemplo_bit_star_theta(config, ax=None, curv_ax=None):
         ax, curv_ax = axes
         p.draw_scenario(ax=ax, show=False)
     comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
-    style = dict(color='#E91E63', ls='--', lw=2.0, label=f'BIT* Theta ({comp:.2f}m)')
+    cv = _check_path_cv(a, config)
+    fi = _make_feas_info(cv)
+    label = f'BIT* Theta ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    style = dict(color='#E91E63', ls='--', lw=2.0, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("BIT* Theta")
@@ -198,25 +250,12 @@ def exemplo_bit_star_theta(config, ax=None, curv_ax=None):
         ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
         fig.tight_layout()
         return fig
-    return p, a
-
-
-def _compute_curvature_and_arc(pts):
-    dx = np.gradient(pts[:, 0])
-    dy = np.gradient(pts[:, 1])
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
-    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
-    diff = np.diff(pts, axis=0)
-    seg = np.linalg.norm(diff, axis=1)
-    s = np.zeros(len(pts))
-    s[1:] = np.cumsum(seg)
-    return k, s
+    return p, a, fi
 
 
 if __name__ == '__main__':
     config = ScenarioConfig()
-    config.seed = 2
+    config.seed = 32
     config.obstacle_type = "circles"
     config.occupancy_rate = 0.2
     config.start = np.array([-1.4, -0.8])
@@ -238,29 +277,21 @@ if __name__ == '__main__':
     config.lambda_f = config.radius
     config.lambda_i = config.radius
 
-    fig, ax = plt.subplots(1, 1, figsize=(16, 6))
-    # Desenha o cenário uma vez
-    config.draw_scenario(ax=ax, show=True)
-
     # ── Cada figura separada (True) ou um único figure comparativo (False) ──
     MODO_FIGURAS_SEPARADAS = False
 
     planners = [
-        # exemplo_bit_star_dubins,
+        exemplo_bit_star_dubins,
         exemplo_de2d_nurbs,
-        # exemplo_pso2d_nurbs,
-        exemplo_rrt_star,
-        # exemplo_rrt_star_dubins,
-        # exemplo_bit_star_theta,
+        exemplo_pso2d_nurbs,
     ]
 
-    # Cores que combinam com as cores dos paths
     planner_colors = {
+        exemplo_rrt_star:        '#2196F3',
+        exemplo_rrt_star_dubins: '#F44336',
         exemplo_bit_star_dubins: '#9C27B0',
         exemplo_de2d_nurbs:      '#4CAF50',
         exemplo_pso2d_nurbs:     '#795548',
-        exemplo_rrt_star:        '#2196F3',
-        exemplo_rrt_star_dubins: '#F44336',
         exemplo_bit_star_theta:  '#E91E63',
     }
 
@@ -269,39 +300,28 @@ if __name__ == '__main__':
         figs = [f for f in figs if f is not None]
     else:
         fig, (ax, curv_ax) = plt.subplots(1, 2, figsize=(16, 6))
-        # Desenha o cenário uma vez
         config.draw_scenario(ax=ax, show=False)
         ax.legend_.remove()
 
-        # Executa os planejadores e coleta resultados
         results = []
         for fn in planners:
-            if fn == exemplo_pso2d_nurbs:
-                config.n_generations = 200
-                config.pop_size = 30
-                config.alpha_kappa = 0.1
-                config.alpha_obs = 500.0
-                config.alpha_workspace = 1.0
-            elif fn == exemplo_de2d_nurbs:
-                config.n_generations = 200
-                config.pop_size = 100
-                config.alpha_kappa = 0.5
-                config.alpha_obs = 10.0
-                config.alpha_workspace = 10.0
-            
             r = fn(config, ax=ax)
             if r is not None:
-                results.append((fn, r[0], r[1]))
+                results.append((fn, *r))
 
         ax.set_xlim(config.xmin, config.xmax)
         ax.set_ylim(config.ymin, config.ymax)
         ax.set_aspect('equal')
-        # ax.set_title("Comparação de Planejadores")
+        ax.set_title("Comparação de Planejadores")
 
-        # Curvatura: analítica para Dubins, numérica para os demais
-        for i, (fn, planner, pts) in enumerate(results):
-            color = planner_colors.get(fn, f'C{i}')
-            inner = getattr(planner, 'planner', None)
+        print("\n=== Factibilidade ===")
+        for fn, obj, pts, fi in results:
+            s = u"\u2713" if fi["feasible"] else u"\u2717"
+            print(f"  {s} {fn.__name__.replace('exemplo_', ''):25s} CV={fi['cv']:.2e}")
+
+        for fn, obj, pts, fi in results:
+            color = planner_colors.get(fn, 'gray')
+            inner = getattr(obj, 'planner', None)
             if inner is not None and hasattr(inner, 'get_curvature_analytical'):
                 k, s = inner.get_curvature_analytical()
             else:
@@ -312,7 +332,7 @@ if __name__ == '__main__':
                         linewidth=1.5, label=rf'$\kappa_{{\mathrm{{max}}}}$ = {config.kappa_max}')
         curv_ax.set_xlabel('Arc length', fontsize=12)
         curv_ax.set_ylabel('Curvature', fontsize=12)
-        # curv_ax.set_title("Curvatura", fontsize=14)
+        curv_ax.set_title("Curvatura", fontsize=14)
         curv_ax.legend(fontsize=10)
         curv_ax.grid(True, alpha=0.3)
         fig.tight_layout()

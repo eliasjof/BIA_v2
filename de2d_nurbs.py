@@ -303,8 +303,27 @@ class DE2D_NURBS:
         deltaw = solution[dim:]
         curve = DE2D_NURBS.get_nurbs(static_params, deltaP, deltaw,
                                       Nsampling=nsampling)
-        curve.evaluate()
-        points_curve_i = np.array(curve.evalpts)
+
+        # Use same evaluation as individual_cost_function (instead of curve.evaluate())
+        N, _ = DE2D_NURBS.compute_nurbs_basis(
+            static_params["knots"], static_params["degree"], nsampling)
+        base_c = np.asarray(static_params["initial_ctrlpts"])
+        base_w = np.asarray(static_params["initial_weights"])
+        s = static_params["num_static_ctrlpts"] // 2
+        n = static_params["num_free_ctrlpts"]
+        cpts = base_c.copy()
+        cpts[s:s+n] += deltaP
+        wts = base_w.copy()
+        wts[s:s+n] += deltaw
+        wmax = wts.max()
+        if wmax == 0:
+            wmax = 1.0
+        wts = wts / wmax
+        cpts_batch = cpts[np.newaxis, :, :]
+        wts_batch = wts[np.newaxis, :]
+        points = DE2D_NURBS.evaluate_nurbs_batch(cpts_batch, wts_batch, N)
+        points_curve_i = points[0]
+
         return (points_curve_i, deltaP, deltaw,
                 curve.ctrlpts, curve.weights, curve.knotvector)
 
