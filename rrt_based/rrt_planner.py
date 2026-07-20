@@ -1,13 +1,18 @@
 import math
 import random
 import copy
+import sys
+import pathlib
 from math import sin, cos, atan2, sqrt, acos, pi, hypot
 
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as Rot
 
+sys.path.append(str(pathlib.Path(__file__).parent))
+sys.path.append(str(pathlib.Path(__file__).resolve().parent.parent))
 from scenario_config import ScenarioConfig
+from bit_star_dubins import BITStarDubins
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -908,13 +913,13 @@ class RRTPlanner:
             robot_radius=c.radius,
         )
 
-        if self.planner_type == 'rrt_star_dubins':
+        if self.planner_type in ('rrt_star_dubins', 'bit_star_dubins'):
             dubins_curvature = c.kappa_max
-            base.update(dict(
-                max_iter=1000,
-                connect_circle_dist=4.5,
-                dubins_curvature=dubins_curvature,
-            ))
+            extra = dict(max_iter=1000, connect_circle_dist=4.5,
+                         dubins_curvature=dubins_curvature)
+            if self.planner_type == 'bit_star_dubins':
+                extra['batch_size'] = 200
+            base.update(extra)
 
         base.update(self._planner_kwargs)
         base.update(kwargs)
@@ -941,6 +946,27 @@ class RRTPlanner:
             )
             self.planner.curvature = p['dubins_curvature']
             self.planner.goal_sample_rate = p['goal_sample_rate']
+            self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
+            self.planner.goal_yaw_th = p.get('goal_yaw_th', np.deg2rad(60))
+        elif self.planner_type == 'bit_star_dubins':
+            start = [float(c.start[0]), float(c.start[1]), float(c.th_start)]
+            goal = [float(c.goal[0]), float(c.goal[1]), float(c.th_goal)]
+            path_resolution = p.get('path_resolution', 0.05)
+            self.planner = BITStarDubins(
+                start=start, goal=goal,
+                obstacle_list=obstacle_list,
+                rand_area=[c.xmin, c.xmax],
+                rand_area_x=[c.xmin, c.xmax],
+                rand_area_y=[c.ymin, c.ymax],
+                goal_sample_rate=p['goal_sample_rate'],
+                max_iter=p['max_iter'],
+                connect_circle_dist=p.get('connect_circle_dist', 4.5),
+                robot_radius=p['robot_radius'],
+                step_size=path_resolution,
+                batch_size=p.get('batch_size', 200),
+                curvature=dubins_curvature,
+                random_yaw_strategy=p.get('random_yaw_strategy', 'toward_goal'),
+            )
             self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
             self.planner.goal_yaw_th = p.get('goal_yaw_th', np.deg2rad(60))
         else:
