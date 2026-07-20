@@ -443,7 +443,10 @@ class DE2D_NURBS:
             fig, ax = plt.subplots(figsize=(8, 6))
         x, y = c.workspace.exterior.xy
         ax.plot(x, y, 'k-', linewidth=c.line_width, label='Workspace')
-        if c.obstacle_type == 'circles':
+        is_circle_obs = (len(c.obs) > 0 and
+                         isinstance(c.obs[0], (tuple, list)) and
+                         len(c.obs[0]) == 3)
+        if is_circle_obs:
             for ob in c.obs:
                 draw_disc(p=np.array([ob[0], ob[1]]), r=ob[2],
                           ax=ax, color='gray', alpha=0.5)

@@ -7,6 +7,7 @@ import pandas as pd
 from scenario_config import ScenarioConfig
 from rrt_based.rrt_planner import RRTPlanner, angle_mod
 from de2d_nurbs import DE2D_NURBS
+from pso2d_nurbs import PSO2D_NURBS
 
 
 # ──────────────────────────────────────────────
@@ -204,6 +205,39 @@ def run_rrt_dubins_smooth(config, seed=None, n_waypoints=20, s=0.015):
     return result
 
 
+def run_bit_star_dubins(config, seed=None):
+    kw = dict(max_iter=500, connect_circle_dist=4.5,
+              goal_sample_rate=20, path_resolution=0.05,
+              random_yaw_strategy='toward_goal',
+              search_until_max_iter=True,
+              batch_size=200)
+    if seed is not None:
+        config.seed = seed
+
+    t0 = time.perf_counter()
+    p = RRTPlanner(config, 'bit_star_dubins', **kw)
+    p.run(animation=False)
+    raw = p.get_best_path()
+    elapsed = time.perf_counter() - t0
+
+    if raw is None:
+        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
+                    length=np.nan, max_kappa=np.nan, collision_free=False)
+
+    raw_arr = np.asarray(raw)
+    length = path_length(raw_arr)
+    col_free = is_collision_free(raw_arr, config.obs, config.radius)
+
+    try:
+        k_anal, _ = p.planner.get_curvature_analytical()
+        max_k = float(k_anal.max())
+    except Exception:
+        max_k = max_curvature_numerical(raw_arr)
+
+    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed, success=True,
+                length=length, max_kappa=max_k, collision_free=col_free)
+
+
 def run_de2d_nurbs(config, seed=None):
     if seed is not None:
         config.seed = seed
@@ -233,16 +267,47 @@ def run_de2d_nurbs(config, seed=None):
                 length=length, max_kappa=k_max, collision_free=col_free)
 
 
+def run_pso2d_nurbs(config, seed=None):
+    if seed is not None:
+        config.seed = seed
+
+    t0 = time.perf_counter()
+    pso = PSO2D_NURBS(config)
+    try:
+        pso.run()
+    except Exception:
+        return dict(path=None, raw_path=None, elapsed=time.perf_counter() - t0,
+                    success=False, length=np.nan, max_kappa=np.nan,
+                    collision_free=False)
+    elapsed = time.perf_counter() - t0
+
+    result = pso.get_best_path()
+    if result is None:
+        return dict(path=None, raw_path=None, elapsed=elapsed,
+                    success=False, length=np.nan, max_kappa=np.nan,
+                    collision_free=False)
+
+    pts = np.asarray(result['points'])
+    length = path_length(pts)
+    k_max = max_curvature_numerical(pts)
+    col_free = is_collision_free(pts, config.obs, config.radius)
+
+    return dict(path=pts, raw_path=pts, elapsed=elapsed, success=True,
+                length=length, max_kappa=k_max, collision_free=col_free)
+
+
 # ──────────────────────────────────────────────
 # Scenario generation helpers
 # ──────────────────────────────────────────────
 
 PLANNERS = [
-    ('rrt_star',         run_rrt_star),
-    ('rrt_star_smooth',  run_rrt_star_smooth),
-    ('rrt_star_dubins',  run_rrt_star_dubins),
+    ('rrt_star',          run_rrt_star),
+    ('rrt_star_smooth',   run_rrt_star_smooth),
+    ('rrt_star_dubins',   run_rrt_star_dubins),
     ('rrt_dubins_smooth', run_rrt_dubins_smooth),
-    ('de2d_nurbs',       run_de2d_nurbs),
+    ('bit_star_dubins',   run_bit_star_dubins),
+    ('de2d_nurbs',        run_de2d_nurbs),
+    ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
 
