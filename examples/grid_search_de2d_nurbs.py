@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize
 from sklearn.model_selection import ParameterGrid
+from joblib import Parallel, delayed
 from scenario_config import ScenarioConfig
 from de2d_nurbs import DE2D_NURBS
 import time
@@ -120,6 +121,54 @@ def plot_results(agg):
     plt.show()
 
 
+def _run_single(params, run, scenario_seed, n_generations, idx):
+    seed = scenario_seed + idx
+    config = ScenarioConfig()
+    config.seed = seed
+    config.start = np.array([-1.4, -0.8])
+    config.goal = np.array([1.4, 0.8])
+    config.th_start = np.deg2rad(0)
+    config.th_goal = np.deg2rad(0)
+    config.radius = 0.073
+    config.kappa_max = 1 / 0.73
+    config.n_generations = n_generations
+    config.pop_size = params["pop_size"]
+    config.scale_x = 2.0
+    config.scale_y = 2.0
+    config.xmin = -2.0
+    config.xmax = 2.0
+    config.ymin = -2.0
+    config.ymax = 2.0
+    config.lambda_i = config.radius
+    config.lambda_f = config.radius
+    config.alpha_kappa = params["alpha_kappa"]
+    config.alpha_obs = params["alpha_obs"]
+    config.alpha_workspace = params["alpha_workspace"]
+
+    de = DE2D_NURBS(config)
+    de.run()
+
+    eval = evaluate_result(de, config)
+    row = {
+        "pop_size": params["pop_size"],
+        "alpha_kappa": params["alpha_kappa"],
+        "alpha_obs": params["alpha_obs"],
+        "alpha_workspace": params["alpha_workspace"],
+        "run": run,
+    }
+    if eval is None:
+        row["success"] = False
+    else:
+        row.update(eval)
+
+    print(f"[{idx + 1}] pop={params['pop_size']}, "
+          f"ak={params['alpha_kappa']:.1f}, "
+          f"ao={params['alpha_obs']:.0f}, "
+          f"aw={params['alpha_workspace']:.1f} "
+          f"-> {'OK' if eval else 'FAIL'} ")
+    return row
+
+
 def main():
     param_grid = {
         "pop_size": [30],
@@ -130,63 +179,26 @@ def main():
     N_RUNS = 3
     SCENARIO_SEED = 10
     N_GENERATIONS = 5
+    N_JOBS = -1
 
     grid = list(ParameterGrid(param_grid))
-    print(f"Total combinations: {len(grid)} x {N_RUNS} runs = {len(grid) * N_RUNS}")
+    total = len(grid) * N_RUNS
+    print(f"Total combinations: {len(grid)} x {N_RUNS} runs = {total} "
+          f"(n_jobs={N_JOBS})")
     print()
 
-    results = []
     t0 = time.time()
 
-    for i, params in enumerate(grid):
+    tasks = []
+    idx = 0
+    for params in grid:
         for run in range(N_RUNS):
-            config = ScenarioConfig()
-            config.seed = SCENARIO_SEED
-            config.start = np.array([-1.4, -0.8])
-            config.goal = np.array([1.4, 0.8])
-            config.th_start = np.deg2rad(0)
-            config.th_goal = np.deg2rad(0)
-            config.radius = 0.073
-            config.kappa_max = 1 / 0.73
-            config.n_generations = N_GENERATIONS
-            config.pop_size = params["pop_size"]
-            config.scale_x = 2.0
-            config.scale_y = 2.0
-            config.xmin = -2.0
-            config.xmax = 2.0
-            config.ymin = -2.0
-            config.ymax = 2.0
-            config.lambda_i = config.radius
-            config.lambda_f = config.radius
-            config.alpha_kappa = params["alpha_kappa"]
-            config.alpha_obs = params["alpha_obs"]
-            config.alpha_workspace = params["alpha_workspace"]
+            tasks.append((params, run, SCENARIO_SEED, N_GENERATIONS, idx))
+            idx += 1
 
-            de = DE2D_NURBS(config)
-            de.run()
-
-            eval = evaluate_result(de, config)
-            row = {
-                "pop_size": params["pop_size"],
-                "alpha_kappa": params["alpha_kappa"],
-                "alpha_obs": params["alpha_obs"],
-                "alpha_workspace": params["alpha_workspace"],
-                "run": run,
-            }
-            if eval is None:
-                row["success"] = False
-            else:
-                row.update(eval)
-            results.append(row)
-
-            elapsed = time.time() - t0
-            print(f"[{i * N_RUNS + run + 1}/{len(grid) * N_RUNS}] "
-                  f"pop={params['pop_size']}, "
-                  f"ak={params['alpha_kappa']:.1f}, "
-                  f"ao={params['alpha_obs']:.0f}, "
-                  f"aw={params['alpha_workspace']:.1f} "
-                  f"-> {'OK' if eval else 'FAIL'} "
-                  f"({elapsed:.0f}s)")
+    results = Parallel(n_jobs=N_JOBS, verbose=10)(
+        delayed(_run_single)(*args) for args in tasks
+    )
 
     df = pd.DataFrame(results)
     csv_path = pathlib.Path(__file__).parent / "grid_search_de_results.csv"
@@ -223,8 +235,8 @@ def main():
 
     plot_results(agg)
 
-    total = time.time() - t0
-    print(f"\nTempo total: {total:.0f}s ({total / 60:.1f}min)")
+    total_elapsed = time.time() - t0
+    print(f"\nTempo total: {total_elapsed:.0f}s ({total_elapsed / 60:.1f}min)")
 
 
 if __name__ == "__main__":
