@@ -263,6 +263,77 @@ def make_scenario(seed, obs_fornecida=None, start=None, goal=None,
     return config
 
 
+# ── Obstacle generators ───────────────────────
+
+def generate_chicane_obstacles():
+    return [
+        (0.6883004767862384, 0.3022825881539657, 0.14464214762976454),
+        (-1.0917736086156131, -0.1126768217023627, 0.2784359135409691),
+        (-0.9002903939515345, 0.26820105644434156, 0.10530719393677274),
+        (-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),
+        (-0.4346374873469, -0.5239275669138156, 0.23962787899764537),
+        (1.0290397406091127, 0.18269405408555595, 0.11934327536669281),
+        (-0.3171168234468903, 0.07341651282804262, 0.29462315279587414),
+    ]
+
+
+def generate_obstacle_pool(n_total=10, seed=42, center_size=0.35,
+                           x_range=(-1.2, 1.2), y_range=(-0.8, 0.8),
+                           r_range=(0.08, 0.25)):
+    """Generate *n_total* obstacles; first is always a large central one."""
+    rng = np.random.RandomState(seed)
+    pool = [(0.0, 0.0, center_size)]
+    for _ in range(n_total - 1):
+        x = rng.uniform(*x_range)
+        y = rng.uniform(*y_range)
+        r = rng.uniform(*r_range)
+        pool.append((x, y, r))
+    return pool
+
+
+def generate_random_obstacles(n, seed, x_range=(-1.5, 1.5), y_range=(-0.9, 0.9),
+                              r_range=(0.08, 0.25)):
+    """Generate *n* independent random obstacles (no central fixed one)."""
+    rng = np.random.RandomState(seed)
+    return [(rng.uniform(*x_range), rng.uniform(*y_range), rng.uniform(*r_range))
+            for _ in range(n)]
+
+
+# ── Scenario list builders ────────────────────
+
+def scenarios_no_obstacles(seeds):
+    return [dict(seed=s, obs_fornecida=[], label=f'no_obs_seed{s}')
+            for s in seeds]
+
+
+def scenarios_fixed_obstacles(seeds, obstacles, label_prefix='obs'):
+    return [dict(seed=s, obs_fornecida=list(obstacles), label=f'{label_prefix}_seed{s}')
+            for s in seeds]
+
+
+def scenarios_progressive(seeds, max_obs=10, pool_seed=42, center_size=0.35,
+                          label_prefix='prog'):
+    """From 1 (central) up to *max_obs* obstacles, sliced from a fixed pool."""
+    pool = generate_obstacle_pool(max_obs, pool_seed, center_size)
+    sc = []
+    for s in seeds:
+        for k in range(1, max_obs + 1):
+            sc.append(dict(seed=s, obs_fornecida=pool[:k],
+                           label=f'{label_prefix}{k:02d}_seed{s}'))
+    return sc
+
+
+def scenarios_random_count(seeds, counts, label_prefix='rand'):
+    """Independent random obstacles for each count (different layout per count)."""
+    sc = []
+    for s in seeds:
+        for n in counts:
+            obs = generate_random_obstacles(n, seed=s * 100 + n)
+            sc.append(dict(seed=s, obs_fornecida=obs,
+                           label=f'{label_prefix}{n:02d}_seed{s}'))
+    return sc
+
+
 # ──────────────────────────────────────────────
 # Main comparison loop
 # ──────────────────────────────────────────────
@@ -274,6 +345,7 @@ def run_comparison(scenario_configs, planners=PLANNERS,
 
     all_records = []
     paths_store = {}
+    obstacles_store = {}
 
     for sc_idx, sc in enumerate(scenario_configs):
         seed = sc['seed']
@@ -345,11 +417,13 @@ def run_comparison(scenario_configs, planners=PLANNERS,
                       f't={record["elapsed"]:.1f}s'
                       f'  col={"" if record["collision_free"] else "COL!"}')
 
+        obstacles_store[label] = np.asarray(c.obs) if len(c.obs) else np.array([])
+
     df = pd.DataFrame(all_records)
-    return df, paths_store
+    return df, paths_store, obstacles_store
 
 
-def save_results(df, paths_store, output_dir='comparison_results'):
+def save_results(df, paths_store, obstacles_store=None, output_dir='comparison_results'):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,9 +433,15 @@ def save_results(df, paths_store, output_dir='comparison_results'):
     with open(output_dir / 'paths.pkl', 'wb') as f:
         pickle.dump(paths_store, f)
 
+    if obstacles_store:
+        with open(output_dir / 'obstacles.pkl', 'wb') as f:
+            pickle.dump(obstacles_store, f)
+
     print(f'\nResults saved to {output_dir}/')
     print(f'  summary.pkl / summary.csv  ({len(df)} records)')
     print(f'  paths.pkl                  ({len(paths_store)} entries)')
+    if obstacles_store:
+        print(f'  obstacles.pkl              ({len(obstacles_store)} entries)')
 
 
 def load_results(output_dir='comparison_results'):
@@ -369,7 +449,12 @@ def load_results(output_dir='comparison_results'):
     df = pd.read_pickle(output_dir / 'summary.pkl')
     with open(output_dir / 'paths.pkl', 'rb') as f:
         paths_store = pickle.load(f)
-    return df, paths_store
+    obstacles_store = {}
+    obs_path = output_dir / 'obstacles.pkl'
+    if obs_path.exists():
+        with open(obs_path, 'rb') as f:
+            obstacles_store = pickle.load(f)
+    return df, paths_store, obstacles_store
 
 
 # ──────────────────────────────────────────────
@@ -395,40 +480,50 @@ def print_summary(df):
 # CLI entry point
 # ──────────────────────────────────────────────
 
-def generate_chicane_obstacles():
-    return [
-        (0.6883004767862384, 0.3022825881539657, 0.14464214762976454),
-        (-1.0917736086156131, -0.1126768217023627, 0.2784359135409691),
-        (-0.9002903939515345, 0.26820105644434156, 0.10530719393677274),
-        (-1.3207217472358725, 0.4514588866302939, 0.2618860913355653),
-        (-0.4346374873469, -0.5239275669138156, 0.23962787899764537),
-        (1.0290397406091127, 0.18269405408555595, 0.11934327536669281),
-        (-0.3171168234468903, 0.07341651282804262, 0.29462315279587414),
-    ]
-
-
 def main():
-    """Entry point — define scenarios and run comparison."""
-    # Smaller seed set for quick validation
+    """Entry point — define scenarios and run comparison.
+
+    To customise, edit the ``experiments`` list below.  Each entry is a
+    ``(name, scenario_list)`` pair; the comparison runs for each entry and
+    saves results under ``comparison_results/<name>/``.
+    """
     seeds = [2, 4, 5]
 
-    # 1) No-obstacle scenario
-    scenarios = [
-        dict(seed=s, obs_fornecida=[], label=f'no_obs_seed{s}')
-        for s in seeds
+    experiments = [
+        # 1) No obstacles
+        ('no_obs', scenarios_no_obstacles(seeds)),
+
+        # 2) Fixed chicane (7 obstacles)
+        ('chicane', scenarios_fixed_obstacles(
+            seeds, generate_chicane_obstacles(), 'chicane')),
+
+        # 3) 1 → 5 obstacles from a progressive pool
+        ('progressive', scenarios_progressive(
+            seeds, max_obs=5, pool_seed=42, center_size=0.35)),
     ]
 
-    # 2) With obstacles (chicane from the problem)
-    chicane_obs = generate_chicane_obstacles()
-    scenarios += [
-        dict(seed=s, obs_fornecida=chicane_obs, label=f'obs_chicane_seed{s}')
-        for s in seeds
-    ]
+    # ── Uncomment any line below to add more experiments ──
 
-    df, paths_store = run_comparison(scenarios, output_dir='comparison_results')
-    save_results(df, paths_store)
-    print_summary(df)
-    return df, paths_store
+    # 1..10 obstacles with independent random layouts
+    # experiments.append(
+    #     ('random', scenarios_random_count(seeds, range(1, 11)))
+    # )
+
+    # Custom chicane with different robot radius
+    # from copy import deepcopy
+    # for s in seeds:
+    #     sc = dict(seed=s, obs_fornecida=generate_chicane_obstacles(),
+    #               radius=0.05, label=f'chicane_tight_seed{s}')
+    #     experiments.append(('chicane_tight', [sc]))
+
+    for exp_name, scenario_list in experiments:
+        print(f'\n{"#"*70}')
+        print(f'# Experiment: {exp_name}  ({len(scenario_list)} scenarios)')
+        print(f'{"#"*70}')
+        out_dir = f'comparison_results/{exp_name}'
+        df, ps, obs_store = run_comparison(scenario_list, output_dir=out_dir)
+        save_results(df, ps, obs_store, output_dir=out_dir)
+        print_summary(df)
 
 
 if __name__ == '__main__':

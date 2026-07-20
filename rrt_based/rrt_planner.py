@@ -451,6 +451,8 @@ class RRTStar(RRT):
         self.connect_circle_dist = connect_circle_dist
         self.search_until_max_iter = search_until_max_iter
         self.play_area = None
+        self.goal_xy_th = self.expand_dis
+        self.goal_yaw_th = np.deg2rad(60)
 
     def planning(self, animation=True):
         self.node_list = [self.start]
@@ -542,53 +544,13 @@ class RRTStar(RRT):
                     near_node.cost = cost
 
     def search_best_goal_node(self):
-
         candidates = []
-
         for i, node in enumerate(self.node_list):
-
             d = self.calc_dist_to_goal(node.x, node.y)
-
-            if d > self.goal_xy_th:
-                continue
-
-            yaw_diff = abs(angle_mod(node.yaw - self.end.yaw))
-
-            if yaw_diff > self.goal_yaw_th:
-                continue
-
-            px, py, _, _, course_lengths = plan_dubins_path(
-                node.x,
-                node.y,
-                node.yaw,
-                self.end.x,
-                self.end.y,
-                self.end.yaw,
-                self.curvature,
-                step_size=self.step_size
-            )
-
-            if len(px) <= 1:
-                continue
-
-            temp = RRT.Node(0, 0)
-            temp.path_x = px
-            temp.path_y = py
-
-            if not self.check_collision(
-                temp,
-                self.obstacle_list,
-                self.robot_radius
-            ):
-                continue
-
-            total_cost = node.cost + sum(abs(c) for c in course_lengths)
-
-            candidates.append((i, total_cost))
-
+            if d <= self.goal_xy_th:
+                candidates.append((i, node.cost + d))
         if not candidates:
             return None
-
         return min(candidates, key=lambda x: x[1])[0]
 
     def generate_final_course(self, goal_index):
