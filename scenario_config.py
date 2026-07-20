@@ -48,6 +48,10 @@ class ScenarioConfig:
                                  Para polígonos: lista de shapely.Polygon.
         expanded_obs_list : lista de obstáculos expandidos (com raio do
                                  robô). Se None, é calculado automaticamente.
+        alpha_kappa            : peso da penalidade de curvatura (default 0.5).
+        alpha_obs              : peso da penalidade de colisão (default 10).
+        alpha_workspace        : peso da penalidade de saída do workspace
+                                 (default 10).
     """
     def __init__(self):
         self.width = 3.2
@@ -83,6 +87,9 @@ class ScenarioConfig:
         self.debug = 0
         self.obs_list = None
         self.expanded_obs_list = None
+        self.alpha_kappa = 0.5
+        self.alpha_obs = 10.0
+        self.alpha_workspace = 10.0
         self._setup_done = False
 
     def setup(self):

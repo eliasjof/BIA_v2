@@ -244,8 +244,8 @@ if __name__ == '__main__':
     MODO_FIGURAS_SEPARADAS = False
 
     planners = [
-        exemplo_bit_star_dubins,
-        exemplo_de2d_nurbs,
+        # exemplo_bit_star_dubins,
+        # exemplo_de2d_nurbs,
         exemplo_pso2d_nurbs,
         # exemplo_rrt_star,
         # exemplo_rrt_star_dubins,
@@ -277,9 +277,15 @@ if __name__ == '__main__':
             if fn == exemplo_pso2d_nurbs:
                 config.n_generations = 200
                 config.pop_size = 30
+                config.alpha_kappa = 0.1
+                config.alpha_obs = 500.0
+                config.alpha_workspace = 1.0
             elif fn == exemplo_de2d_nurbs:
                 config.n_generations = 200
                 config.pop_size = 100
+                config.alpha_kappa = 0.5
+                config.alpha_obs = 10.0
+                config.alpha_workspace = 10.0
             
             r = fn(config, ax=ax)
             if r is not None:

@@ -110,6 +110,9 @@ class DE2D_NURBS:
             "ymin_env": c.ymin,
             "ymax_env": c.ymax,
             "workspace": c.workspace,
+            "alpha_kappa": c.alpha_kappa,
+            "alpha_obs": c.alpha_obs,
+            "alpha_workspace": c.alpha_workspace,
             "id": agent_id,
         }
 
@@ -207,6 +210,9 @@ class DE2D_NURBS:
             static_params["basis_matrix"] = N
 
         kappa_max = static_params["kappa_max"]
+        alpha_kappa = static_params.get("alpha_kappa", 0.5)
+        alpha_obs = static_params.get("alpha_obs", 10.0)
+        alpha_workspace = static_params.get("alpha_workspace", 10.0)
         r = static_params["radius"]
         n_free = static_params["num_free_ctrlpts"]
         space_dim = static_params["space_dim"]
@@ -246,7 +252,7 @@ class DE2D_NURBS:
         cross = dx * d2y - dy * d2x
         kappa_all = np.abs(cross) / (norm_d**3 + 1e-8)
         kappa_all = np.where(kappa_all <= kappa_max, kappa_max, kappa_all)
-        h_kappa = 0.5 * np.sum((kappa_all - kappa_max)**2, axis=1)
+        h_kappa = alpha_kappa * np.sum((kappa_all - kappa_max)**2, axis=1)
 
         # ========== Workspace (vectorized — rectangle) ==========
         xmin_env = static_params.get("xmin_env", -2)
@@ -258,7 +264,7 @@ class DE2D_NURBS:
         inside_pt = (pts_x >= xmin_env) & (pts_x <= xmax_env) & \
                     (pts_y >= ymin_env) & (pts_y <= ymax_env)
         inside_seg = inside_pt[:, :-1] & inside_pt[:, 1:]
-        h_workspace = np.sum(~inside_seg, axis=1) * 1000 * 0.01
+        h_workspace = np.sum(~inside_seg, axis=1) * alpha_workspace
 
         # ========== Collision (per individual, Shapely-dependent) ==========
         h_obs = np.zeros(pop.shape[0])
@@ -277,7 +283,7 @@ class DE2D_NURBS:
             else:
                 n_segs, inside_len, _, _ = detailed_collision_with_polygons(
                     pts, expanded_obs)
-            h_obs[i] = 10 * inside_len if n_segs > 0 else 0.0
+            h_obs[i] = alpha_obs * inside_len if n_segs > 0 else 0.0
 
         f = length
         g = np.zeros((pop.shape[0], 1))
