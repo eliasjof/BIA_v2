@@ -216,17 +216,19 @@ def _compute_curvature_and_arc(pts):
 
 if __name__ == '__main__':
     config = ScenarioConfig()
-    config.seed = 10
+    config.seed = 2
     config.obstacle_type = "circles"
-    config.occupancy_rate = 0.1
+    config.occupancy_rate = 0.2
     config.start = np.array([-1.4, -0.8])
     config.goal = np.array([1.4, 0.8])
     config.th_start = np.deg2rad(0)
     config.th_goal = np.deg2rad(0)
     config.radius = 0.073
     config.kappa_max = 1 / 0.73
+    config.max_fes = None
     config.n_generations = 200
     config.pop_size = 100
+    config.nsampling = 120
     config.scale_x = 2.0
     config.scale_y = 2.0
     config.xmin = -2.0
@@ -245,9 +247,9 @@ if __name__ == '__main__':
 
     planners = [
         # exemplo_bit_star_dubins,
-        # exemplo_de2d_nurbs,
-        exemplo_pso2d_nurbs,
-        # exemplo_rrt_star,
+        exemplo_de2d_nurbs,
+        # exemplo_pso2d_nurbs,
+        exemplo_rrt_star,
         # exemplo_rrt_star_dubins,
         # exemplo_bit_star_theta,
     ]
@@ -310,7 +312,7 @@ if __name__ == '__main__':
                         linewidth=1.5, label=rf'$\kappa_{{\mathrm{{max}}}}$ = {config.kappa_max}')
         curv_ax.set_xlabel('Arc length', fontsize=12)
         curv_ax.set_ylabel('Curvature', fontsize=12)
-        curv_ax.set_title("Curvatura", fontsize=14)
+        # curv_ax.set_title("Curvatura", fontsize=14)
         curv_ax.legend(fontsize=10)
         curv_ax.grid(True, alpha=0.3)
         fig.tight_layout()
