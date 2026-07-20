@@ -9,6 +9,10 @@ from rrt_based.rrt_planner import RRTPlanner
 from pso2d_nurbs import PSO2D_NURBS
 
 
+CHECK = "\u2713"
+CROSS = "\u2717"
+
+
 def _compute_curvature_and_arc(pts):
     dx = np.gradient(pts[:, 0])
     dy = np.gradient(pts[:, 1])
@@ -102,7 +106,8 @@ def exemplo_rrt_star_dubins(config, ax=None, curv_ax=None):
     comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
     cv = _check_path_cv(a, config)
     fi = _make_feas_info(cv)
-    label = f'RRT* Dubins ({comp:.2f}m) ["{u"\u2713" if fi["feasible"] else u"\u2717"}" CV={cv:.2e}]'
+    sym = CHECK if fi["feasible"] else CROSS
+    label = f'RRT* Dubins ({comp:.2f}m) [{sym} CV={cv:.2e}]'
     style = dict(color='#F44336', ls='-', lw=1.5, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
@@ -141,7 +146,8 @@ def exemplo_bit_star_dubins(config, ax=None, curv_ax=None):
     comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
     cv = _check_path_cv(a, config)
     fi = _make_feas_info(cv)
-    label = f'BIT* Dubins ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    sym = CHECK if fi["feasible"] else CROSS
+    label = f'BIT* Dubins ({comp:.2f}m) [{sym} CV={cv:.2e}]'
     style = dict(color='#9C27B0', ls='-.', lw=2.0, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
@@ -172,7 +178,8 @@ def exemplo_de2d_nurbs(config, ax=None, curv_ax=None):
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax, curv_ax = axes
         de.draw_scenario(ax=ax, show=False)
-    label = f'DE2D_NURBS ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    sym = CHECK if fi["feasible"] else CROSS
+    label = f'DE2D_NURBS ({comp:.2f}m) [{sym} CV={cv:.2e}]'
     style = dict(color='#4CAF50', ls='-', lw=2.5, label=label)
     ax.plot(pts[:, 0], pts[:, 1], **style)
     ax.legend(fontsize=10)
@@ -202,7 +209,8 @@ def exemplo_pso2d_nurbs(config, ax=None, curv_ax=None):
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax, curv_ax = axes
         pso.draw_scenario(ax=ax, show=False)
-    label = f'PSO2D_NURBS ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    sym = CHECK if fi["feasible"] else CROSS
+    label = f'PSO2D_NURBS ({comp:.2f}m) [{sym} CV={cv:.2e}]'
     style = dict(color='#795548', ls=':', lw=2.5, label=label)
     ax.plot(pts[:, 0], pts[:, 1], **style)
     ax.legend(fontsize=10)
@@ -241,7 +249,8 @@ def exemplo_bit_star_theta(config, ax=None, curv_ax=None):
     comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
     cv = _check_path_cv(a, config)
     fi = _make_feas_info(cv)
-    label = f'BIT* Theta ({comp:.2f}m) [{u"\u2713" if fi["feasible"] else u"\u2717"} CV={cv:.2e}]'
+    sym = CHECK if fi["feasible"] else CROSS
+    label = f'BIT* Theta ({comp:.2f}m) [{sym} CV={cv:.2e}]'
     style = dict(color='#E91E63', ls='--', lw=2.0, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
@@ -316,7 +325,7 @@ if __name__ == '__main__':
 
         print("\n=== Factibilidade ===")
         for fn, obj, pts, fi in results:
-            s = u"\u2713" if fi["feasible"] else u"\u2717"
+            s = CHECK if fi["feasible"] else CROSS
             print(f"  {s} {fn.__name__.replace('exemplo_', ''):25s} CV={fi['cv']:.2e}")
 
         for fn, obj, pts, fi in results:
