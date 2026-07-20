@@ -84,10 +84,14 @@ class ScenarioConfig:
             return
         random.seed(self.seed)
         np.random.seed(self.seed)
-        self.xmin = -self.width / 2
-        self.xmax = self.width / 2
-        self.ymin = -self.height / 2
-        self.ymax = self.height / 2
+        if not hasattr(self, 'xmin'):
+            self.xmin = -self.width / 2
+        if not hasattr(self, 'xmax'):
+            self.xmax = self.width / 2
+        if not hasattr(self, 'ymin'):
+            self.ymin = -self.height / 2
+        if not hasattr(self, 'ymax'):
+            self.ymax = self.height / 2
         self.workspace = Polygon([
             (self.xmin, self.ymin),
             (self.xmax, self.ymin),

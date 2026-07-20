@@ -1,6 +1,6 @@
 import numpy as np
 from de2d_nurbs import DE2D_NURBS
-from pso_cop import PSO
+from pso import PSO
 from __utils import *
 
 
