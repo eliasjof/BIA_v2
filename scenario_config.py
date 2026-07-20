@@ -29,7 +29,7 @@ class ScenarioConfig:
         safe_radius            : raio de segurança ao redor de start/goal
                                  (nenhum obstáculo é gerado dentro dele).
         obstacle_type          : 'polygons' (polígonos convexos aleatórios) ou
-                                 'circles' (círculos). Ignorado se obs_fornecida.
+                                 'circles' (círculos). Ignorado se obs_list.
         n_obstacles            : número de obstáculos (apenas polygons).
         poly_size              : raio médio dos polígonos.
         r_min / r_max          : raio mínimo/máximo dos círculos.
@@ -38,11 +38,11 @@ class ScenarioConfig:
         seed                   : semente aleatória para reprodutibilidade.
         scale_x / scale_y      : escala dos limites da população (busca).
         debug                  : modo debug do LSHADE (0 = desligado).
-        obs_fornecida          : lista de obstáculos fornecida pelo usuário.
+        obs_list          : lista de obstáculos fornecida pelo usuário.
                                  Se None, obstáculos são gerados aleatoriamente.
                                  Para círculos: lista de (x, y, r).
                                  Para polígonos: lista de shapely.Polygon.
-        expanded_obs_fornecida : lista de obstáculos expandidos (com raio do
+        expanded_obs_list : lista de obstáculos expandidos (com raio do
                                  robô). Se None, é calculado automaticamente.
     """
     def __init__(self):
@@ -75,8 +75,8 @@ class ScenarioConfig:
         self.scale_x = 1.5
         self.scale_y = 1.0
         self.debug = 0
-        self.obs_fornecida = None
-        self.expanded_obs_fornecida = None
+        self.obs_list = None
+        self.expanded_obs_list = None
         self._setup_done = False
 
     def setup(self):
@@ -104,8 +104,8 @@ class ScenarioConfig:
             Point(self.start).buffer(self.safe_radius),
             Point(self.goal).buffer(self.safe_radius)
         ]
-        if self.obs_fornecida is not None:
-            self.obs = self.obs_fornecida
+        if self.obs_list is not None:
+            self.obs = self.obs_list
         elif self.obstacle_type == 'circles':
             self.obs = generate_circles_fast(
                 self.occupancy_rate, self.xmin, self.xmax,
@@ -117,10 +117,10 @@ class ScenarioConfig:
                 self.n_obstacles, self.xmin, self.xmax,
                 self.ymin, self.ymax, self.poly_size,
                 safe_zones, self._a_min, self._a_max)
-        if self.expanded_obs_fornecida is not None:
-            self.expanded_obs = self.expanded_obs_fornecida
+        if self.expanded_obs_list is not None:
+            self.expanded_obs = self.expanded_obs_list
         elif self.obstacle_type == 'circles' or (
-                self.obs_fornecida is not None and
+                self.obs_list is not None and
                 len(self.obs) > 0 and
                 isinstance(self.obs[0], (tuple, list)) and
                 len(self.obs[0]) == 3):

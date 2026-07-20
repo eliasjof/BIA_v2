@@ -311,7 +311,7 @@ PLANNERS = [
 ]
 
 
-def make_scenario(seed, obs_fornecida=None, start=None, goal=None,
+def make_scenario(seed, obs_list=None, start=None, goal=None,
                   th_start=0.0, th_goal=0.0, radius=0.073, kappa_max=1/0.73):
     config = ScenarioConfig()
     config.seed = seed
@@ -323,8 +323,8 @@ def make_scenario(seed, obs_fornecida=None, start=None, goal=None,
         config.start = np.asarray(start, dtype=float)
     if goal is not None:
         config.goal = np.asarray(goal, dtype=float)
-    if obs_fornecida is not None:
-        config.obs_fornecida = list(obs_fornecida)
+    if obs_list is not None:
+        config.obs_list = list(obs_list)
     return config
 
 
@@ -367,12 +367,12 @@ def generate_random_obstacles(n, seed, x_range=(-1.5, 1.5), y_range=(-0.9, 0.9),
 # ── Scenario list builders ────────────────────
 
 def scenarios_no_obstacles(seeds):
-    return [dict(seed=s, obs_fornecida=[], label=f'no_obs_seed{s}')
+    return [dict(seed=s, obs_list=[], label=f'no_obs_seed{s}')
             for s in seeds]
 
 
 def scenarios_fixed_obstacles(seeds, obstacles, label_prefix='obs'):
-    return [dict(seed=s, obs_fornecida=list(obstacles), label=f'{label_prefix}_seed{s}')
+    return [dict(seed=s, obs_list=list(obstacles), label=f'{label_prefix}_seed{s}')
             for s in seeds]
 
 
@@ -383,7 +383,7 @@ def scenarios_progressive(seeds, max_obs=10, pool_seed=42, center_size=0.35,
     sc = []
     for s in seeds:
         for k in range(1, max_obs + 1):
-            sc.append(dict(seed=s, obs_fornecida=pool[:k],
+            sc.append(dict(seed=s, obs_list=pool[:k],
                            label=f'{label_prefix}{k:02d}_seed{s}'))
     return sc
 
@@ -394,7 +394,7 @@ def scenarios_random_count(seeds, counts, label_prefix='rand'):
     for s in seeds:
         for n in counts:
             obs = generate_random_obstacles(n, seed=s * 100 + n)
-            sc.append(dict(seed=s, obs_fornecida=obs,
+            sc.append(dict(seed=s, obs_list=obs,
                            label=f'{label_prefix}{n:02d}_seed{s}'))
     return sc
 
@@ -414,7 +414,7 @@ def run_comparison(scenario_configs, planners=PLANNERS,
 
     for sc_idx, sc in enumerate(scenario_configs):
         seed = sc['seed']
-        obs = sc.get('obs_fornecida')
+        obs = sc.get('obs_list')
         label = sc.get('label', f'seed{seed}')
 
         if verbose:
@@ -428,7 +428,7 @@ def run_comparison(scenario_configs, planners=PLANNERS,
 
             # Fresh config for each run to avoid _setup_done issues
             c = make_scenario(
-                seed=seed, obs_fornecida=obs,
+                seed=seed, obs_list=obs,
                 start=sc.get('start'), goal=sc.get('goal'),
                 th_start=sc.get('th_start', 0.0),
                 th_goal=sc.get('th_goal', 0.0),
@@ -577,7 +577,7 @@ def main():
     # Custom chicane with different robot radius
     # from copy import deepcopy
     # for s in seeds:
-    #     sc = dict(seed=s, obs_fornecida=generate_chicane_obstacles(),
+    #     sc = dict(seed=s, obs_list=generate_chicane_obstacles(),
     #               radius=0.05, label=f'chicane_tight_seed{s}')
     #     experiments.append(('chicane_tight', [sc]))
 
