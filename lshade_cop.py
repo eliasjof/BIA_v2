@@ -527,7 +527,7 @@ colors = ["darkblue", "yellow"]
 custom_cmap = LinearSegmentedColormap.from_list("yellow_blue_cmap", colors)
 
 class LSHADE_COP:
-    def __init__(self, pop_size, dim, max_fes, xmin, xmax, func=None, H=5, tolerance=1e-5, initial_pop=None, type_mean=2, type_mutation=1, type_sharing='best', static_params = None, dimension=2, color='blue', id=0, DEBUG=0):
+    def __init__(self, pop_size, dim, max_fes, xmin, xmax, func=None, H=5, tolerance=1e-5, initial_pop=None, type_mean=2, type_mutation=1, type_sharing='best', static_params = None, dimension=2, color='blue', id=0, DEBUG=0, **kwargs):
         self.pop_size = pop_size
         self.max_pop_size = pop_size
         self.min_pop_size = 4

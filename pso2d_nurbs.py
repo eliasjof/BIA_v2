@@ -43,3 +43,17 @@ class PSO2D_NURBS(DE2D_NURBS):
         )
         self.agent = agent
         return agent
+
+    def get_best_path(self, nsampling=None):
+        if self.agent is None or self.agent.gbest_pos is None:
+            return None
+        c = self.config
+        ns = nsampling or c.nsampling
+        pts, _, _, ctrlpts, weights, knots = self.get_points_from_solution(
+            self.agent, self.agent.gbest_pos, nsampling=ns)
+        return {
+            "points": pts,
+            "ctrlpts": ctrlpts,
+            "weights": weights,
+            "knots": knots,
+        }
