@@ -328,10 +328,7 @@ class BITStarTheta:
             for x, y in zip(gp['x'][1:], gp['y'][1:]):
                 path.append([x, y])
         else:
-            last = self.vertices[goal_index]
-            d = self.euclidean_dist(last, self.goal)
-            if d > self.goal_xy_th:
-                path.append([self.goal.x, self.goal.y])
+            path.append([self.goal.x, self.goal.y])
 
         return path
 

@@ -304,9 +304,14 @@ class DE2D_NURBS:
         curve = DE2D_NURBS.get_nurbs(static_params, deltaP, deltaw,
                                       Nsampling=nsampling)
 
-        # Use same evaluation as individual_cost_function (instead of curve.evaluate())
-        N, _ = DE2D_NURBS.compute_nurbs_basis(
-            static_params["knots"], static_params["degree"], nsampling)
+        # Use same basis matrix as individual_cost_function to guarantee
+        # identical points (avoid nsampling mismatch that would cause
+        # curvature discrepancies)
+        if "basis_matrix" in static_params:
+            N = static_params["basis_matrix"]
+        else:
+            N, _ = DE2D_NURBS.compute_nurbs_basis(
+                static_params["knots"], static_params["degree"], nsampling)
         base_c = np.asarray(static_params["initial_ctrlpts"])
         base_w = np.asarray(static_params["initial_weights"])
         s = static_params["num_static_ctrlpts"] // 2

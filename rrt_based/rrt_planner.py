@@ -830,6 +830,10 @@ class RRTStarDubins(RRTStar):
                 self.curvature, step_size=self.step_size)
             if len(px) > 1:
                 path.extend([x, y] for x, y in zip(px[1:], py[1:]))
+            else:
+                path.append([self.end.x, self.end.y])
+        else:
+            path.append([self.end.x, self.end.y])
 
         return path
 
