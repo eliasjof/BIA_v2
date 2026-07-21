@@ -81,14 +81,16 @@ def run_rrt(config, planner_type='rrt_star', extra_kw=None, seed=None):
 
     if raw is None:
         return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
-                    length=np.nan, max_kappa=np.nan, collision_free=False)
+                    length=np.nan, max_kappa=np.nan, collision_free=False,
+                    cv_opt=np.nan)
 
     raw_arr = np.asarray(raw)
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
 
     return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed, success=True,
-                length=length, max_kappa=np.nan, collision_free=col_free)
+                length=length, max_kappa=np.nan, collision_free=col_free,
+                cv_opt=np.nan)
 
 
 def run_rrt_star(config, seed=None):
@@ -249,6 +251,13 @@ def run_bit_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
+def _optimizer_cv(agent):
+    try:
+        return float(agent.log_best_CV[-1]) if len(agent.log_best_CV) else np.nan
+    except Exception:
+        return np.nan
+
+
 def run_de2d_nurbs(config, seed=None):
     if seed is not None:
         config.seed = seed
@@ -260,14 +269,14 @@ def run_de2d_nurbs(config, seed=None):
     except Exception:
         return dict(path=None, raw_path=None, elapsed=time.perf_counter() - t0,
                     success=False, length=np.nan, max_kappa=np.nan,
-                    collision_free=False)
+                    collision_free=False, cv_opt=np.nan)
     elapsed = time.perf_counter() - t0
 
     result = de.get_best_path()
     if result is None:
         return dict(path=None, raw_path=None, elapsed=elapsed,
                     success=False, length=np.nan, max_kappa=np.nan,
-                    collision_free=False)
+                    collision_free=False, cv_opt=np.nan)
 
     pts = np.asarray(result['points'])
     length = path_length(pts)
@@ -275,7 +284,8 @@ def run_de2d_nurbs(config, seed=None):
     col_free = is_collision_free(pts, config.obs, config.radius)
 
     return dict(path=pts, raw_path=pts, elapsed=elapsed, success=True,
-                length=length, max_kappa=k_max, collision_free=col_free)
+                length=length, max_kappa=k_max, collision_free=col_free,
+                cv_opt=_optimizer_cv(de.agent))
 
 
 def run_pso2d_nurbs(config, seed=None):
@@ -289,14 +299,14 @@ def run_pso2d_nurbs(config, seed=None):
     except Exception:
         return dict(path=None, raw_path=None, elapsed=time.perf_counter() - t0,
                     success=False, length=np.nan, max_kappa=np.nan,
-                    collision_free=False)
+                    collision_free=False, cv_opt=np.nan)
     elapsed = time.perf_counter() - t0
 
     result = pso.get_best_path()
     if result is None:
         return dict(path=None, raw_path=None, elapsed=elapsed,
                     success=False, length=np.nan, max_kappa=np.nan,
-                    collision_free=False)
+                    collision_free=False, cv_opt=np.nan)
 
     pts = np.asarray(result['points'])
     length = path_length(pts)
@@ -304,7 +314,8 @@ def run_pso2d_nurbs(config, seed=None):
     col_free = is_collision_free(pts, config.obs, config.radius)
 
     return dict(path=pts, raw_path=pts, elapsed=elapsed, success=True,
-                length=length, max_kappa=k_max, collision_free=col_free)
+                length=length, max_kappa=k_max, collision_free=col_free,
+                cv_opt=_optimizer_cv(pso.agent))
 
 
 # ──────────────────────────────────────────────
@@ -334,6 +345,9 @@ def _run_single_task(sc, pname, runner_fn):
         th_goal=sc.get('th_goal', 0.0),
         radius=sc.get('radius', 0.073),
         kappa_max=sc.get('kappa_max', 1/0.73),
+        n_generations=sc.get('n_generations', 200),
+        pop_size=sc.get('pop_size', 100),
+        nsampling=sc.get('nsampling', 120),
     )
     c.setup()
 
@@ -354,43 +368,45 @@ def _run_single_task(sc, pname, runner_fn):
     pts = result.get('path')
     max_kappa = result.get('max_kappa', np.nan)
     collision_free = result.get('collision_free', False)
+    cv_opt = result.get('cv_opt', np.nan)
 
-    # Curvature violation: use runner's max_kappa
-    # (analytical for Dubins, numerical for DE/PSO, nan for plain RRT*)
-    if not np.isnan(max_kappa):
-        kappa_respected = max_kappa <= c.kappa_max * 1.05 + 1e-6
-        kappa_viol = 0.0 if kappa_respected else (max_kappa - c.kappa_max) ** 2
-    elif pts is not None and len(np.asarray(pts)) >= 2:
-        # Fallback for planners that don't compute max_kappa (plain RRT*)
-        kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
-        kappa_respected = kappa_viol < 1e-6
+    # For DE/PSO: use the optimizer's own CV (reflects actual constraint handling)
+    if not np.isnan(cv_opt):
+        feasible = cv_opt < 1e-6
+        cv_val = float(cv_opt)
     else:
-        kappa_viol = np.nan
-        kappa_respected = False
+        # For RRT-based: compute post-hoc violation
+        if not np.isnan(max_kappa):
+            kappa_respected = max_kappa <= c.kappa_max * 1.05 + 1e-6
+            kappa_viol = 0.0 if kappa_respected else (max_kappa - c.kappa_max) ** 2
+        elif pts is not None and len(np.asarray(pts)) >= 2:
+            kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
+            kappa_respected = kappa_viol < 1e-6
+        else:
+            kappa_viol = np.nan
+            kappa_respected = False
 
-    # Workspace violation
-    ws_viol = 0.0
-    if pts is not None and len(np.asarray(pts)) >= 2:
-        a = np.asarray(pts)
-        ws_viol = float(np.sum(
-            (a[:, 0] < c.xmin) | (a[:, 0] > c.xmax) |
-            (a[:, 1] < c.ymin) | (a[:, 1] > c.ymax)
-        ))
+        ws_viol = 0.0
+        if pts is not None and len(np.asarray(pts)) >= 2:
+            a = np.asarray(pts)
+            ws_viol = float(np.sum(
+                (a[:, 0] < c.xmin) | (a[:, 0] > c.xmax) |
+                (a[:, 1] < c.ymin) | (a[:, 1] > c.ymax)
+            ))
 
-    # Obstacle violation (continuous penalty for penetration)
-    obs_viol = 0.0
-    if not collision_free and pts is not None and len(np.asarray(pts)) >= 2:
-        a = np.asarray(pts)
-        if hasattr(c, 'obs') and c.obs is not None:
-            for ob in c.obs:
-                ox, oy, size = ob[0], ob[1], ob[2]
-                d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
-                pen = np.maximum(0, size + c.radius - d)
-                if np.any(pen > 0):
-                    obs_viol += float(np.sum(pen ** 2))
+        obs_viol = 0.0
+        if not collision_free and pts is not None and len(np.asarray(pts)) >= 2:
+            a = np.asarray(pts)
+            if hasattr(c, 'obs') and c.obs is not None:
+                for ob in c.obs:
+                    ox, oy, size = ob[0], ob[1], ob[2]
+                    d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
+                    pen = np.maximum(0, size + c.radius - d)
+                    if np.any(pen > 0):
+                        obs_viol += float(np.sum(pen ** 2))
 
-    feasible = collision_free and kappa_respected and ws_viol < 0.5
-    cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
+        feasible = collision_free and kappa_respected and ws_viol < 0.5
+        cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
 
     record = dict(
         scenario=label, seed=seed, planner=pname,
@@ -419,16 +435,17 @@ def _run_single_task(sc, pname, runner_fn):
 
 
 def make_scenario(seed, obs_list=None, start=None, goal=None,
-                  th_start=0.0, th_goal=0.0, radius=0.073, kappa_max=1/0.73):
+                  th_start=0.0, th_goal=0.0, radius=0.073, kappa_max=1/0.73,
+                  n_generations=200, pop_size=100, nsampling=120):
     config = ScenarioConfig()
     config.seed = seed
     config.radius = radius
     config.kappa_max = kappa_max
     config.th_start = th_start
     config.th_goal = th_goal
-    config.n_generations = 200
-    config.pop_size = 100
-    config.nsampling = 120
+    config.n_generations = n_generations
+    config.pop_size = pop_size
+    config.nsampling = nsampling
     config.scale_x = 2.0
     config.scale_y = 2.0
     config.xmin = -2.0
