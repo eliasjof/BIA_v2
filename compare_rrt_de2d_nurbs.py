@@ -49,32 +49,14 @@ def check_collision_path(path, obstacle_list, robot_radius):
     return is_collision_free(path, obstacle_list, robot_radius)
 
 
-def compute_path_cv(pts, config):
-    if pts is None or len(pts) < 2:
-        return np.nan
+def _numerical_curvature_violation(pts, kappa_max):
     a = np.asarray(pts)
     dx = np.gradient(a[:, 0])
     dy = np.gradient(a[:, 1])
     ddx = np.gradient(dx)
     ddy = np.gradient(dy)
     k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
-    kappa_viol = np.sum(np.maximum(0, k - config.kappa_max) ** 2)
-
-    ws_viol = np.sum(
-        (a[:, 0] < config.xmin) | (a[:, 0] > config.xmax) |
-        (a[:, 1] < config.ymin) | (a[:, 1] > config.ymax)
-    )
-
-    obs_viol = 0.0
-    if hasattr(config, 'obs') and config.obs is not None:
-        for ob in config.obs:
-            ox, oy, size = ob[0], ob[1], ob[2]
-            d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
-            pen = np.maximum(0, size + config.radius - d)
-            if np.any(pen > 0):
-                obs_viol += np.sum(pen ** 2)
-
-    return float(kappa_viol + obs_viol + ws_viol)
+    return float(np.sum(np.maximum(0, k - kappa_max) ** 2))
 
 
 # ──────────────────────────────────────────────
@@ -370,10 +352,45 @@ def _run_single_task(sc, pname, runner_fn):
     result.setdefault('collision_free', False)
 
     pts = result.get('path')
-    cv_val = (compute_path_cv(pts, c)
-              if pts is not None and len(np.asarray(pts)) >= 2
-              else np.nan)
-    feasible_val = not np.isnan(cv_val) and cv_val < 1e-6
+    max_kappa = result.get('max_kappa', np.nan)
+    collision_free = result.get('collision_free', False)
+
+    # Curvature violation: use runner's max_kappa
+    # (analytical for Dubins, numerical for DE/PSO, nan for plain RRT*)
+    if not np.isnan(max_kappa):
+        kappa_respected = max_kappa <= c.kappa_max * 1.05 + 1e-6
+        kappa_viol = 0.0 if kappa_respected else (max_kappa - c.kappa_max) ** 2
+    elif pts is not None and len(np.asarray(pts)) >= 2:
+        # Fallback for planners that don't compute max_kappa (plain RRT*)
+        kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
+        kappa_respected = kappa_viol < 1e-6
+    else:
+        kappa_viol = np.nan
+        kappa_respected = False
+
+    # Workspace violation
+    ws_viol = 0.0
+    if pts is not None and len(np.asarray(pts)) >= 2:
+        a = np.asarray(pts)
+        ws_viol = float(np.sum(
+            (a[:, 0] < c.xmin) | (a[:, 0] > c.xmax) |
+            (a[:, 1] < c.ymin) | (a[:, 1] > c.ymax)
+        ))
+
+    # Obstacle violation (continuous penalty for penetration)
+    obs_viol = 0.0
+    if not collision_free and pts is not None and len(np.asarray(pts)) >= 2:
+        a = np.asarray(pts)
+        if hasattr(c, 'obs') and c.obs is not None:
+            for ob in c.obs:
+                ox, oy, size = ob[0], ob[1], ob[2]
+                d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
+                pen = np.maximum(0, size + c.radius - d)
+                if np.any(pen > 0):
+                    obs_viol += float(np.sum(pen ** 2))
+
+    feasible = collision_free and kappa_respected and ws_viol < 0.5
+    cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
 
     record = dict(
         scenario=label, seed=seed, planner=pname,
@@ -383,7 +400,7 @@ def _run_single_task(sc, pname, runner_fn):
         elapsed=result.get('elapsed', total_time),
         collision_free=result.get('collision_free', False),
         cv=cv_val,
-        feasible=feasible_val,
+        feasible=feasible,
         n_obs=len(c.obs) if hasattr(c, 'obs') else 0,
     )
 
