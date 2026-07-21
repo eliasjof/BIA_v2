@@ -273,18 +273,23 @@ def check_segment_collision(segment, obstacles, r, tol=1):
 #             dobs.append(dist)    
 #     return dobs
 def check_collisions_cylinderBT(points_curve, cylinders, r=0.1):
-    centers = np.array([[c[0], c[1]] for c in cylinders])    
+    """Return penetration depth for each point inside an expanded obstacle.
+
+    *cylinders* must already have the robot radius included
+    (i.e. *expanded_obstacles*). The *r* parameter is ignored and kept
+    only for backward compatibility.
+    """
+    centers = np.array([[c[0], c[1]] for c in cylinders])
+    radii = np.array([c[2] for c in cylinders])
     bt = BallTree(centers, leaf_size=40)
-    
-    min_distances, indices = bt.query(points_curve[:,:2], k=len(cylinders))    
+
+    min_distances, indices = bt.query(points_curve[:,:2], k=len(cylinders))
     dobs = []
-    # print(f'len = {len(indices)}, {np.array(min_distances).shape}')
-    for dist, ii in zip(min_distances, indices):     
-        
-        for i, dist_i in enumerate(dist):        
+    for dist, ii in zip(min_distances, indices):
+        for i, dist_i in enumerate(dist):
             idx = ii[i]
-            if dist_i < cylinders[idx][2]:  # Check if point is inside cylinder            
-                dobs.append(dist_i)    
+            if dist_i < radii[idx]:
+                dobs.append(radii[idx] - dist_i)  # penetration depth
     return dobs
 
 def check_collision_cylinder2line(curve, obs_cylinders, r, debug=0, tol=1):
