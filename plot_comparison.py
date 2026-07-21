@@ -14,6 +14,7 @@ PLANNER_STYLE = {
     'rrt_star_smooth':   dict(color='#00BCD4', ls='--', lw=2.0, label='RRT* + B-spline'),
     'rrt_star_dubins':   dict(color='#F44336', ls='-',  lw=1.5, label='RRT* Dubins'),
     'rrt_dubins_smooth': dict(color='#FF9800', ls='--', lw=2.0, label='RRT* Dubins + B-spline'),
+    'modified_dubins_rrt_star': dict(color="#00FF62", ls='--', lw=2.0, label='Modified Dubins-RRT*'),
     'bit_star_dubins':   dict(color='#9C27B0', ls='-.', lw=2.0, label='BIT* Dubins'),
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color='#4CAF50', ls='-',  lw=2.5, label='DE2D_NURBS'),

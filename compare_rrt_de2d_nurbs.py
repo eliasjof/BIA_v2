@@ -134,7 +134,7 @@ def run_rrt_star_dubins(config, seed=None):
 
 
 def run_modified_dubins_rrt_star(config, seed=None):
-    kw = dict(max_iter=2000, connect_circle_dist=2.0,
+    kw = dict(max_iter=4000, connect_circle_dist=3.0,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
@@ -366,7 +366,7 @@ PLANNERS = [
     # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
     ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
     ('bit_star_dubins',   run_bit_star_dubins),
-    ('de2d_nurbs',        run_de2d_nurbs),
+    # ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
@@ -742,7 +742,7 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(30)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(5)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles
