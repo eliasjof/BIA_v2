@@ -26,10 +26,14 @@ def max_curvature_numerical(path):
     if path is None or len(path) < 4:
         return np.nan
     a = np.asarray(path)
-    dx = np.gradient(a[:, 0])
-    dy = np.gradient(a[:, 1])
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
+    # Arc-length parametrisation — np.gradient assumes unit spacing which is
+    # wrong for NURBS curves sampled at uniform parameter (non-uniform arc length)
+    diff = np.diff(a, axis=0)
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(diff, axis=1))])
+    dx = np.gradient(a[:, 0], s)
+    dy = np.gradient(a[:, 1], s)
+    ddx = np.gradient(dx, s)
+    ddy = np.gradient(dy, s)
     k = np.abs(dx * ddy - dy * ddx) / ((dx**2 + dy**2)**1.5 + 1e-10)
     return float(k.max())
 
@@ -51,10 +55,12 @@ def check_collision_path(path, obstacle_list, robot_radius):
 
 def _numerical_curvature_violation(pts, kappa_max):
     a = np.asarray(pts)
-    dx = np.gradient(a[:, 0])
-    dy = np.gradient(a[:, 1])
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
+    diff = np.diff(a, axis=0)
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(diff, axis=1))])
+    dx = np.gradient(a[:, 0], s)
+    dy = np.gradient(a[:, 1], s)
+    ddx = np.gradient(dx, s)
+    ddy = np.gradient(dy, s)
     k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
     return float(np.sum(np.maximum(0, k - kappa_max) ** 2))
 
