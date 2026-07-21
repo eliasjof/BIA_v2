@@ -134,7 +134,7 @@ def run_rrt_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.10):
+def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -150,14 +150,14 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.10):
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=10000,
+        goal_sample_rate=20, max_iter=1500,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
         eta1=0.3,
         safety_radius_factor=safety_radius_factor)
-    raw = planner.planning(animation=False, search_until_max_iter=False)
+    raw = planner.planning(animation=False, search_until_max_iter=True)
     elapsed = time.perf_counter() - t0
 
     if raw is None:
@@ -178,7 +178,7 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.10):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=1.10):
+def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0.0):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -194,14 +194,14 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=1
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=30000,
+        goal_sample_rate=20, max_iter=1500,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
         eta1=0.3,
         safety_radius_factor=safety_radius_factor)
-    raw = planner.planning(animation=False, search_until_max_iter=False)
+    raw = planner.planning(animation=False, search_until_max_iter=True)
     mdr_elapsed = time.perf_counter() - t0
 
     if raw is None:
@@ -227,7 +227,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=1
 
     waypoints = np.array([[n.x, n.y] for n in nodes_path])
 
-    ccpoa = CCPOA(curvature=config.kappa_max, max_iter=500, tol=1e-6,
+    ccpoa = CCPOA(curvature=config.kappa_max, max_iter=5, tol=1e-6,
                   step_size=0.05)
     opt_path, theta_opt = ccpoa.optimize(
         waypoints, config.th_start, config.th_goal)
@@ -825,19 +825,19 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(5)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(1)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles
-        # ('no_obs', scenarios_no_obstacles(seeds)),
+        ('no_obs', scenarios_no_obstacles(seeds)),
 
         # # 2) Fixed chicane (7 obstacles)
         # ('chicane', scenarios_fixed_obstacles(
         #     seeds, generate_chicane_obstacles(), 'chicane')),
 
         # 3) 1 → 5 obstacles from a progressive pool
-        ('progressive', scenarios_progressive(
-            seeds, max_obs=9, pool_seed=22, center_size=0.3)),
+        # ('progressive', scenarios_progressive(
+            # seeds, max_obs=9, pool_seed=22, center_size=0.3)),
     ]
 
     # ── Uncomment any line below to add more experiments ──
