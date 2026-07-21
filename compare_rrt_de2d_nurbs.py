@@ -133,6 +133,38 @@ def run_rrt_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
+def run_modified_dubins_rrt_star(config, seed=None):
+    kw = dict(max_iter=2000, connect_circle_dist=2.0,
+              goal_sample_rate=20, path_resolution=0.05,
+              random_yaw_strategy='toward_goal',
+              search_until_max_iter=True)
+    if seed is not None:
+        config.seed = seed
+
+    t0 = time.perf_counter()
+    p = RRTPlanner(config, 'modified_dubins_rrt_star', **kw)
+    p.run(animation=False)
+    raw = p.get_best_path()
+    elapsed = time.perf_counter() - t0
+
+    if raw is None:
+        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
+                    length=np.nan, max_kappa=np.nan, collision_free=False)
+
+    raw_arr = np.asarray(raw)
+    length = path_length(raw_arr)
+    col_free = is_collision_free(raw_arr, config.obs, config.radius)
+
+    try:
+        k_anal, _ = p.planner.get_curvature_analytical()
+        max_k = float(k_anal.max())
+    except Exception:
+        max_k = max_curvature_numerical(raw_arr)
+
+    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed, success=True,
+                length=length, max_kappa=max_k, collision_free=col_free)
+
+
 def smooth_path_rrt(planner, raw_path, n_waypoints=20, s=0.015):
     if raw_path is None or len(raw_path) < 4:
         return None
@@ -328,13 +360,14 @@ def run_pso2d_nurbs(config, seed=None):
 # ──────────────────────────────────────────────
 
 PLANNERS = [
-    ('rrt_star',          run_rrt_star),
-    ('rrt_star_smooth',   run_rrt_star_smooth),
-    ('rrt_star_dubins',   run_rrt_star_dubins),
-    ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    # ('rrt_star',          run_rrt_star),
+    # ('rrt_star_smooth',   run_rrt_star_smooth),
+    # ('rrt_star_dubins',   run_rrt_star_dubins),
+    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
     ('bit_star_dubins',   run_bit_star_dubins),
     ('de2d_nurbs',        run_de2d_nurbs),
-    ('pso2d_nurbs',       run_pso2d_nurbs),
+    # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
 
