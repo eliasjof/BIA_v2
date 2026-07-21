@@ -202,11 +202,11 @@ class DE2D_NURBS:
     def individual_cost_function(pop, shared_pop=[], static_params=None):
         if static_params is None:
             raise ValueError("static_params must be provided")
-
+        nsampling = static_params.get("nsampling", 100)
         if "basis_matrix" not in static_params:
             N, _ = DE2D_NURBS.compute_nurbs_basis(
                 static_params["knots"], static_params["degree"],
-                static_params.get("nsampling", 100))
+                nsampling)
             static_params["basis_matrix"] = N
 
         kappa_max = static_params["kappa_max"]
@@ -252,7 +252,7 @@ class DE2D_NURBS:
         cross = dx * d2y - dy * d2x
         kappa_all = np.abs(cross) / (norm_d**3 + 1e-8)
         kappa_all = np.where(kappa_all <= kappa_max, kappa_max, kappa_all)
-        h_kappa = alpha_kappa * np.sum((kappa_all - kappa_max)**2, axis=1)
+        h_kappa = alpha_kappa * (np.sum((kappa_all - kappa_max)**2, axis=1) + len(kappa_all)/nsampling)
 
         # ========== Workspace (vectorized — rectangle) ==========
         xmin_env = static_params.get("xmin_env", -2)
@@ -279,7 +279,7 @@ class DE2D_NURBS:
             if is_circle:
                 dists = check_collisions_cylinderBT(pts, expanded_obs, r)
                 n_segs = len(dists)
-                inside_len = np.sum(np.array(dists)**2) + n_segs if n_segs > 0 else 0.0
+                inside_len = np.sum(np.array(dists)**2) + n_segs/nsampling if n_segs > 0 else 0.0
             else:
                 n_segs, inside_len, _, _ = detailed_collision_with_polygons(
                     pts, expanded_obs)

@@ -128,8 +128,8 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
 
     ax.legend(legend_lines, legend_labels, fontsize=7, loc='upper left',
               framealpha=0.9, edgecolor='gray')
-    ax.set_title(f'Scenario: {scenario_label}', fontsize=13, fontweight='bold')
-
+    # ax.set_title(f'Scenario: {scenario_label}', fontsize=13, fontweight='bold')
+    ax.axis([-2,2, -2,2])
     fig.tight_layout()
     out_path = save_dir / f'{scenario_label}.png'
     fig.savefig(out_path, dpi=150, bbox_inches='tight')

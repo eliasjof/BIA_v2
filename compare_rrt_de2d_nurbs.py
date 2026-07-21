@@ -223,7 +223,7 @@ def run_rrt_dubins_smooth(config, seed=None, n_waypoints=20, s=0.015):
 
 
 def run_bit_star_dubins(config, seed=None):
-    kw = dict(max_iter=2000, connect_circle_dist=4.5,
+    kw = dict(max_iter=5000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True,
@@ -328,13 +328,13 @@ def run_pso2d_nurbs(config, seed=None):
 # ──────────────────────────────────────────────
 
 PLANNERS = [
-    # ('rrt_star',          run_rrt_star),
-    # ('rrt_star_smooth',   run_rrt_star_smooth),
-    # ('rrt_star_dubins',   run_rrt_star_dubins),
-    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    ('rrt_star',          run_rrt_star),
+    ('rrt_star_smooth',   run_rrt_star_smooth),
+    ('rrt_star_dubins',   run_rrt_star_dubins),
+    ('rrt_dubins_smooth', run_rrt_dubins_smooth),
     ('bit_star_dubins',   run_bit_star_dubins),
     ('de2d_nurbs',        run_de2d_nurbs),
-    # ('pso2d_nurbs',       run_pso2d_nurbs),
+    ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
 
@@ -461,8 +461,8 @@ def make_scenario(seed, obs_list=None, start=None, goal=None,
     config.lambda_i = config.radius
     config.lambda_f = config.radius
     config.alpha_workspace = 5
-    config.alpha_obs = 100
-    config.alpha_kappa = 5
+    config.alpha_obs = 200
+    config.alpha_kappa = 10
 
     # print(f'  Scenario seed={seed}  radius={radius:.3f}  kappa_max={kappa_max:.3f},  n_generations={n_generations}  pop_size={pop_size}  nsampling={nsampling} lambda_i={config.lambda_i:.3f}  lambda_f={config.lambda_f:.3f}  alpha_workspace={config.alpha_workspace:.3f}  alpha_obs={config.alpha_obs:.3f}  alpha_kappa={config.alpha_kappa:.3f}')
     
@@ -540,7 +540,7 @@ def scenarios_progressive(seeds, max_obs=10, pool_seed=42, center_size=0.35,
     pool = generate_obstacle_pool(max_obs, pool_seed, center_size)
     sc = []
     for s in seeds:
-        for k in range(1, max_obs + 1):
+        for k in range(0, max_obs + 1):
             sc.append(dict(seed=s, obs_list=pool[:k],
                            label=f'{label_prefix}{k:02d}_seed{s}'))
     return sc
@@ -709,10 +709,10 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(15)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(30)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
-        # # 1) No obstacles
+        # # # 1) No obstacles
         # ('no_obs', scenarios_no_obstacles(seeds)),
 
         # # 2) Fixed chicane (7 obstacles)
@@ -721,7 +721,7 @@ def main():
 
         # 3) 1 → 5 obstacles from a progressive pool
         ('progressive', scenarios_progressive(
-            seeds, max_obs=6, pool_seed=42, center_size=0.35)),
+            seeds, max_obs=9, pool_seed=22, center_size=0.3)),
     ]
 
     # ── Uncomment any line below to add more experiments ──
