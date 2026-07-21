@@ -453,6 +453,7 @@ def make_scenario(seed, obs_list=None, start=None, goal=None,
     config.width = config.scale_x*2
     config.height = config.scale_y*2
     config.max_fes = None
+    config.obstacle_type = 'circles'   # 'polygons' ou 'circles'
     
     
     
@@ -460,7 +461,7 @@ def make_scenario(seed, obs_list=None, start=None, goal=None,
     config.lambda_i = config.radius
     config.lambda_f = config.radius
     config.alpha_workspace = 5
-    config.alpha_obs = 40
+    config.alpha_obs = 100
     config.alpha_kappa = 5
 
     # print(f'  Scenario seed={seed}  radius={radius:.3f}  kappa_max={kappa_max:.3f},  n_generations={n_generations}  pop_size={pop_size}  nsampling={nsampling} lambda_i={config.lambda_i:.3f}  lambda_f={config.lambda_f:.3f}  alpha_workspace={config.alpha_workspace:.3f}  alpha_obs={config.alpha_obs:.3f}  alpha_kappa={config.alpha_kappa:.3f}')
