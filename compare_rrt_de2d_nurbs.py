@@ -1,8 +1,9 @@
-import pickle, time, copy, gc
+import pickle, time, copy, gc, sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 from scenario_config import ScenarioConfig
 from rrt_based.rrt_planner import RRTPlanner, angle_mod
@@ -339,6 +340,67 @@ PLANNERS = [
 ]
 
 
+def _run_single_task(sc, pname, runner_fn):
+    seed = sc['seed']
+    obs = sc.get('obs_list')
+    label = sc.get('label', f'seed{seed}')
+
+    c = make_scenario(
+        seed=seed, obs_list=obs,
+        start=sc.get('start'), goal=sc.get('goal'),
+        th_start=sc.get('th_start', 0.0),
+        th_goal=sc.get('th_goal', 0.0),
+        radius=sc.get('radius', 0.073),
+        kappa_max=sc.get('kappa_max', 1/0.73),
+    )
+    c.setup()
+
+    t_start = time.perf_counter()
+    try:
+        result = runner_fn(c, seed=seed)
+    except Exception:
+        result = dict(path=None, raw_path=None, success=False,
+                      length=np.nan, max_kappa=np.nan,
+                      collision_free=False)
+    total_time = time.perf_counter() - t_start
+    result.setdefault('elapsed', total_time)
+    result.setdefault('success', False)
+    result.setdefault('length', np.nan)
+    result.setdefault('max_kappa', np.nan)
+    result.setdefault('collision_free', False)
+
+    pts = result.get('path')
+    cv_val = (compute_path_cv(pts, c)
+              if pts is not None and len(np.asarray(pts)) >= 2
+              else np.nan)
+    feasible_val = not np.isnan(cv_val) and cv_val < 1e-6
+
+    record = dict(
+        scenario=label, seed=seed, planner=pname,
+        success=result['success'],
+        length=result.get('length', np.nan),
+        max_kappa=result.get('max_kappa', np.nan),
+        elapsed=result.get('elapsed', total_time),
+        collision_free=result.get('collision_free', False),
+        cv=cv_val,
+        feasible=feasible_val,
+        n_obs=len(c.obs) if hasattr(c, 'obs') else 0,
+    )
+
+    path_key = f'{label}_{pname}'
+    raw = result.get('raw_path')
+    path_data = result.get('path')
+    if path_data is not None and len(path_data) >= 2:
+        path_arr = np.asarray(path_data)
+    elif raw is not None and len(raw) >= 2:
+        path_arr = np.asarray(raw)
+    else:
+        path_arr = None
+
+    obs_arr = np.asarray(c.obs) if hasattr(c, 'obs') and len(c.obs) else np.array([])
+    return record, path_key, path_arr, label, obs_arr
+
+
 def make_scenario(seed, obs_list=None, start=None, goal=None,
                   th_start=0.0, th_goal=0.0, radius=0.073, kappa_max=1/0.73):
     config = ScenarioConfig()
@@ -443,95 +505,44 @@ def scenarios_random_count(seeds, counts, label_prefix='rand'):
 # ──────────────────────────────────────────────
 
 def run_comparison(scenario_configs, planners=PLANNERS,
-                   output_dir='comparison_results', verbose=True):
+                   output_dir='comparison_results', verbose=True, n_jobs=1):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    task_list = [(sc, pname, runner_fn)
+                 for sc in scenario_configs
+                 for pname, runner_fn in planners]
+
+    if n_jobs == 1:
+        results = []
+        n_tasks = len(task_list)
+        for idx, args in enumerate(task_list):
+            if verbose:
+                sc = args[0]
+                label = sc.get('label', f'seed{sc["seed"]}')
+                print(f'[{idx+1}/{n_tasks}] {args[1]:20s}  {label}', end=' ', flush=True)
+            rec, pkey, parr, lbl, oarr = _run_single_task(*args)
+            results.append((rec, pkey, parr, lbl, oarr))
+            if verbose:
+                ok = 'OK' if rec['success'] else 'FAIL'
+                print(f'{ok}  len={rec["length"]:.2f}m  t={rec["elapsed"]:.1f}s'
+                      f'  col={"" if rec["collision_free"] else "COL!"}')
+    else:
+        n_jobs = min(n_jobs, len(task_list))
+        if verbose:
+            print(f'Running {len(task_list)} tasks on {n_jobs} workers ...')
+        results = Parallel(n_jobs=n_jobs, verbose=10)(
+            delayed(_run_single_task)(*args) for args in task_list
+        )
 
     all_records = []
     paths_store = {}
     obstacles_store = {}
-
-    for sc_idx, sc in enumerate(scenario_configs):
-        seed = sc['seed']
-        obs = sc.get('obs_list')
-        label = sc.get('label', f'seed{seed}')
-
-        if verbose:
-            print(f'\n{"="*60}')
-            print(f'Scenario {sc_idx+1}/{len(scenario_configs)}: {label}')
-            print(f'  seed={seed}  obstacles={"yes" if obs else "no"}')
-
-        for pname, runner_fn in planners:
-            if verbose:
-                print(f'  Running {pname:20s} ...', end=' ', flush=True)
-
-            # Fresh config for each run to avoid _setup_done issues
-            c = make_scenario(
-                seed=seed, obs_list=obs,
-                start=sc.get('start'), goal=sc.get('goal'),
-                th_start=sc.get('th_start', 0.0),
-                th_goal=sc.get('th_goal', 0.0),
-                radius=sc.get('radius', 0.073),
-                kappa_max=sc.get('kappa_max', 1/0.73),
-                
-            )
-
-            t_start = time.perf_counter()
-            try:
-                result = runner_fn(c, seed=seed)
-            except Exception as e:
-                if verbose:
-                    print(f'ERROR: {e}')
-                result = dict(path=None, raw_path=None, success=False,
-                              length=np.nan, max_kappa=np.nan,
-                              collision_free=False)
-            total_time = time.perf_counter() - t_start
-            result.setdefault('elapsed', total_time)
-            result.setdefault('success', False)
-            result.setdefault('length', np.nan)
-            result.setdefault('max_kappa', np.nan)
-            result.setdefault('collision_free', False)
-
-            pts = result.get('path')
-            c.setup()
-            cv_val = (compute_path_cv(pts, c)
-                      if pts is not None and len(np.asarray(pts)) >= 2
-                      else np.nan)
-            feasible_val = not np.isnan(cv_val) and cv_val < 1e-6
-
-            record = dict(
-                scenario=label, seed=seed, planner=pname,
-                success=result['success'],
-                length=result.get('length', np.nan),
-                max_kappa=result.get('max_kappa', np.nan),
-                elapsed=result.get('elapsed', total_time),
-                collision_free=result.get('collision_free', False),
-                cv=cv_val,
-                feasible=feasible_val,
-                n_obs=len(c.obs) if hasattr(c, 'obs') else 0,
-            )
-            all_records.append(record)
-
-            # Store path for later plotting
-            path_key = f'{label}_{pname}'
-            raw = result.get('raw_path')
-            path_data = result.get('path')
-            # Store the actual path (smoothed if applicable)
-            if path_data is not None and len(path_data) >= 2:
-                paths_store[path_key] = np.asarray(path_data)
-            elif raw is not None and len(raw) >= 2:
-                paths_store[path_key] = np.asarray(raw)
-            else:
-                paths_store[path_key] = None
-
-            if verbose:
-                status = 'OK' if record['success'] else 'FAIL'
-                print(f'{status}  len={record["length"]:.2f}m  '
-                      f'k={record["max_kappa"]:.2f}  '
-                      f't={record["elapsed"]:.1f}s'
-                      f'  col={"" if record["collision_free"] else "COL!"}')
-
-        obstacles_store[label] = np.asarray(c.obs) if len(c.obs) else np.array([])
+    for record, path_key, path_arr, label, obs_arr in results:
+        all_records.append(record)
+        if path_key not in paths_store:
+            paths_store[path_key] = path_arr
+        obstacles_store[label] = obs_arr
 
     df = pd.DataFrame(all_records)
     return df, paths_store, obstacles_store
@@ -627,7 +638,20 @@ def main():
     To customise, edit the ``experiments`` list below.  Each entry is a
     ``(name, scenario_list)`` pair; the comparison runs for each entry and
     saves results under ``comparison_results/<name>/``.
+
+    Usage
+    -----
+      python compare_rrt_de2d_nurbs.py             # sequential
+      python compare_rrt_de2d_nurbs.py -j 4        # 4 workers
+      python compare_rrt_de2d_nurbs.py -j -1       # all cores
     """
+    n_jobs = 1
+    argv = sys.argv[1:]
+    if argv and argv[0] == '-j' and len(argv) > 1:
+        n_jobs = int(argv[1])
+    elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
+        n_jobs = int(argv[0][2:])
+
     seeds = [2, 4, 5, 10]
 
     experiments = [
@@ -660,9 +684,13 @@ def main():
     for exp_name, scenario_list in experiments:
         print(f'\n{"#"*70}')
         print(f'# Experiment: {exp_name}  ({len(scenario_list)} scenarios)')
+        print(f'{exp_name}: {len(scenario_list) * len(PLANNERS)} tasks')
+        print(f'n_jobs={n_jobs}')
         print(f'{"#"*70}')
         out_dir = f'comparison_results/{exp_name}'
-        df, ps, obs_store = run_comparison(scenario_list, output_dir=out_dir)
+        df, ps, obs_store = run_comparison(
+            scenario_list, output_dir=out_dir, n_jobs=n_jobs,
+        )
         save_results(df, ps, obs_store, output_dir=out_dir)
         print_summary(df)
 

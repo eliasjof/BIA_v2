@@ -27,6 +27,24 @@ def get_workspace_config():
     return c
 
 
+def read_df_safe(results_dir):
+    """Try pickle, fall back to CSV (handles pandas version mismatches)."""
+    pkl = results_dir / 'summary.pkl'
+    csv = results_dir / 'summary.csv'
+    if pkl.is_file():
+        try:
+            return pd.read_pickle(pkl)
+        except Exception:
+            print('  Warning: pickle version mismatch, falling back to CSV')
+    if csv.is_file():
+        df = pd.read_csv(csv)
+        for col in ('success', 'collision_free', 'feasible'):
+            if col in df.columns:
+                df[col] = df[col].astype(bool)
+        return df
+    raise FileNotFoundError(f'No summary.pkl or summary.csv in {results_dir}')
+
+
 def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
                   start=None, goal=None, radius=0.073,
                   save_dir='plots'):
@@ -38,6 +56,8 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
         start = ws.start
     if goal is None:
         goal = ws.goal
+
+    has_feas = 'feasible' in df_sub.columns
 
     fig, ax = plt.subplots(figsize=(9, 6.5))
 
@@ -72,22 +92,27 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
         path = paths_store.get(pkey)
 
         style = PLANNER_STYLE.get(pname, dict(color='gray', ls='-', lw=1))
-        color = style['color']
-        ls = style['ls']
-        lw = style['lw']
 
         if path is not None and len(path) >= 2:
-            ax.plot(path[:, 0], path[:, 1], color=color, ls=ls, lw=lw, zorder=4)
+            lw = style['lw']
+            if has_feas and not row['feasible']:
+                lw = style['lw']
+                ax.plot(path[:, 0], path[:, 1], color=style['color'],
+                        ls=style['ls'], lw=lw, alpha=0.5, zorder=4)
+            else:
+                ax.plot(path[:, 0], path[:, 1], color=style['color'],
+                        ls=style['ls'], lw=lw, zorder=4)
 
         ok = row['success']
         length = row['length']
-        kappa = row['max_kappa']
         col_free = row['collision_free']
 
         if ok and not np.isnan(length):
             parts = [f"L={length:.2f}m"]
-            if not np.isnan(kappa):
-                parts.append(f"\u03ba={kappa:.2f}")
+            if has_feas:
+                sym = '\u2713' if row['feasible'] else '\u2717'
+                parts.append(f'CV={row["cv"]:.1e}' if not pd.isna(row['cv']) else 'CV=nan')
+                parts.append(f'{sym}')
             if not col_free:
                 parts.append("COL!")
             metric_str = f"  [{', '.join(parts)}]"
@@ -97,11 +122,11 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
             metric_str = ""
 
         lbl = f"{style['label']}{metric_str}"
-        leg_line = plt.Line2D([0], [0], color=color, ls=ls, lw=lw)
+        leg_line = plt.Line2D([0], [0], color=style['color'], ls=style['ls'], lw=style['lw'])
         legend_lines.append(leg_line)
         legend_labels.append(lbl)
 
-    ax.legend(legend_lines, legend_labels, fontsize=8, loc='upper left',
+    ax.legend(legend_lines, legend_labels, fontsize=7, loc='upper left',
               framealpha=0.9, edgecolor='gray')
     ax.set_title(f'Scenario: {scenario_label}', fontsize=13, fontweight='bold')
 
@@ -113,17 +138,23 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     return out_path
 
 
+def _load_pickle_safe(path):
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    except Exception as e:
+        print(f'  Warning: could not load {path.name}: {e}')
+        return {}
+
+
 def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
              start=None, goal=None, radius=0.073):
     results_dir = Path(results_dir)
-    df = pd.read_pickle(results_dir / 'summary.pkl')
-    with open(results_dir / 'paths.pkl', 'rb') as f:
-        paths_store = pickle.load(f)
-    obstacles_store = {}
-    obs_path = results_dir / 'obstacles.pkl'
-    if obs_path.exists():
-        with open(obs_path, 'rb') as f:
-            obstacles_store = pickle.load(f)
+    df = read_df_safe(results_dir)
+    paths_store = _load_pickle_safe(results_dir / 'paths.pkl')
+    obstacles_store = _load_pickle_safe(results_dir / 'obstacles.pkl')
 
     scenarios = df['scenario'].unique()
     if scenario_filter:
