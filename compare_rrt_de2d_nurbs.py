@@ -44,7 +44,7 @@ def is_collision_free(path, obstacle_list, robot_radius):
     a = np.asarray(path)
     for ox, oy, size in obstacle_list:
         d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
-        if (d <= size + robot_radius + 1e-9).any():
+        if (d + 1e-9 < size + robot_radius).any():
             return False
     return True
 
@@ -350,9 +350,9 @@ def _run_single_task(sc, pname, runner_fn):
         th_goal=sc.get('th_goal', 0.0),
         radius=sc.get('radius', 0.073),
         kappa_max=sc.get('kappa_max', 1/0.73),
-        n_generations=sc.get('n_generations', 400),
+        n_generations=sc.get('n_generations', 450),
         pop_size=sc.get('pop_size', 100),
-        nsampling=sc.get('nsampling', 110),
+        nsampling=sc.get('nsampling', 200),
     )
     c.setup()
 
@@ -711,12 +711,12 @@ def main():
     seeds = list(range(15)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
-        # 1) No obstacles
-        ('no_obs', scenarios_no_obstacles(seeds)),
+        # # 1) No obstacles
+        # ('no_obs', scenarios_no_obstacles(seeds)),
 
-        # 2) Fixed chicane (7 obstacles)
-        ('chicane', scenarios_fixed_obstacles(
-            seeds, generate_chicane_obstacles(), 'chicane')),
+        # # 2) Fixed chicane (7 obstacles)
+        # ('chicane', scenarios_fixed_obstacles(
+        #     seeds, generate_chicane_obstacles(), 'chicane')),
 
         # 3) 1 → 5 obstacles from a progressive pool
         ('progressive', scenarios_progressive(
