@@ -6,7 +6,8 @@ import pandas as pd
 from joblib import Parallel, delayed
 
 from scenario_config import ScenarioConfig
-from rrt_based.rrt_planner import RRTPlanner, angle_mod
+from rrt_based.rrt_planner_modified import RRTPlanner, angle_mod, ModifiedDubinsRRTStar
+from rrt_based.ccpoa import CCPOA
 from de2d_nurbs import DE2D_NURBS
 try:
     from pso2d_nurbs import PSO2D_NURBS
@@ -134,17 +135,28 @@ def run_rrt_star_dubins(config, seed=None):
 
 
 def run_modified_dubins_rrt_star(config, seed=None):
-    kw = dict(max_iter=4000, connect_circle_dist=3.0,
-              goal_sample_rate=20, path_resolution=0.05,
-              random_yaw_strategy='toward_goal',
-              search_until_max_iter=True)
     if seed is not None:
         config.seed = seed
+    config.setup()
+
+    start = [float(config.start[0]), float(config.start[1]), float(config.th_start)]
+    goal = [float(config.goal[0]), float(config.goal[1]), float(config.th_goal)]
+    obstacle_list = list(config.obs)
 
     t0 = time.perf_counter()
-    p = RRTPlanner(config, 'modified_dubins_rrt_star', **kw)
-    p.run(animation=False)
-    raw = p.get_best_path()
+    planner = ModifiedDubinsRRTStar(
+        start=start, goal=goal,
+        obstacle_list=obstacle_list,
+        rand_area=[config.xmin, config.xmax],
+        rand_area_x=[config.xmin, config.xmax],
+        rand_area_y=[config.ymin, config.ymax],
+        goal_sample_rate=20, max_iter=1000,
+        connect_circle_dist=4.5,
+        robot_radius=config.radius,
+        step_size=0.05,
+        curvature=config.kappa_max,
+        eta1=0.3)
+    raw = planner.planning(animation=False, search_until_max_iter=False)
     elapsed = time.perf_counter() - t0
 
     if raw is None:
@@ -156,12 +168,80 @@ def run_modified_dubins_rrt_star(config, seed=None):
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
 
     try:
-        k_anal, _ = p.planner.get_curvature_analytical()
+        k_anal, _ = planner.get_curvature_analytical()
         max_k = float(k_anal.max())
     except Exception:
         max_k = max_curvature_numerical(raw_arr)
 
     return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed, success=True,
+                length=length, max_kappa=max_k, collision_free=col_free)
+
+
+def run_modified_dubins_rrt_star_ccpoa(config, seed=None):
+    if seed is not None:
+        config.seed = seed
+    config.setup()
+
+    start = [float(config.start[0]), float(config.start[1]), float(config.th_start)]
+    goal = [float(config.goal[0]), float(config.goal[1]), float(config.th_goal)]
+    obstacle_list = list(config.obs)
+
+    t0 = time.perf_counter()
+    planner = ModifiedDubinsRRTStar(
+        start=start, goal=goal,
+        obstacle_list=obstacle_list,
+        rand_area=[config.xmin, config.xmax],
+        rand_area_x=[config.xmin, config.xmax],
+        rand_area_y=[config.ymin, config.ymax],
+        goal_sample_rate=20, max_iter=1000,
+        connect_circle_dist=4.5,
+        robot_radius=config.radius,
+        step_size=0.05,
+        curvature=config.kappa_max,
+        eta1=0.3)
+    raw = planner.planning(animation=False, search_until_max_iter=False)
+    mdr_elapsed = time.perf_counter() - t0
+
+    if raw is None:
+        return dict(path=None, raw_path=None, elapsed=mdr_elapsed, success=False,
+                    length=np.nan, max_kappa=np.nan, collision_free=False)
+
+    # Extract waypoints from the node path
+    nodes_path = []
+    best_idx = planner.search_best_goal_node()
+    if best_idx is None:
+        return dict(path=None, raw_path=None, elapsed=mdr_elapsed, success=False,
+                    length=np.nan, max_kappa=np.nan, collision_free=False)
+    node = planner.node_list[best_idx]
+    while node is not None:
+        nodes_path.append(node)
+        node = node.parent
+    nodes_path.reverse()
+
+    if len(nodes_path) < 2:
+        return dict(path=np.asarray(raw), raw_path=raw, elapsed=mdr_elapsed,
+                    success=True, length=path_length(raw),
+                    max_kappa=np.nan, collision_free=False)
+
+    waypoints = np.array([[n.x, n.y] for n in nodes_path])
+
+    ccpoa = CCPOA(curvature=config.kappa_max, max_iter=5, tol=1e-6,
+                  step_size=0.05)
+    opt_path, theta_opt = ccpoa.optimize(
+        waypoints, config.th_start, config.th_goal)
+    total_elapsed = time.perf_counter() - t0
+
+    opt_arr = np.asarray(opt_path)
+    length = path_length(opt_arr)
+    col_free = is_collision_free(opt_arr, config.obs, config.radius)
+
+    try:
+        k_anal, _ = planner.get_curvature_analytical()
+        max_k = float(k_anal.max())
+    except Exception:
+        max_k = max_curvature_numerical(opt_arr)
+
+    return dict(path=opt_arr, raw_path=raw, elapsed=total_elapsed, success=True,
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
@@ -365,8 +445,9 @@ PLANNERS = [
     # ('rrt_star_dubins',   run_rrt_star_dubins),
     # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
     ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
+    ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
     ('bit_star_dubins',   run_bit_star_dubins),
-    # ('de2d_nurbs',        run_de2d_nurbs),
+    ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
