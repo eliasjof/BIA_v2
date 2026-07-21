@@ -563,8 +563,10 @@ class LSHADE_COP:
         if initial_pop is None:
             # Initialize population and archive
             self.P_c = xmin + np.random.rand(pop_size, dim) * (xmax - xmin)
+            self._initial_pop = None
         else:
             self.P_c = initial_pop.copy()
+            self._initial_pop = initial_pop.copy()
 
         self.shared_individual = self.P_c[0].copy() # shared individual in cooperative schema
         self.static_params = static_params.copy()
@@ -826,7 +828,10 @@ class LSHADE_COP:
         self.log_mean_F = []
         self.log_mean_CR = []
         self.log_mutation_choise = [0, 0]
-        self.P_c = self.xmin + np.random.rand(self._init_pop_size, self.dim) * (self.xmax - self.xmin)
+        if self._initial_pop is not None:
+            self.P_c = self._initial_pop.copy()
+        else:
+            self.P_c = self.xmin + np.random.rand(self._init_pop_size, self.dim) * (self.xmax - self.xmin)
         self.shared_individual = self.P_c[0].copy()
         self.f = None
         self.g = None
