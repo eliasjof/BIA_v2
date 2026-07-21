@@ -323,13 +323,13 @@ def run_pso2d_nurbs(config, seed=None):
 # ──────────────────────────────────────────────
 
 PLANNERS = [
-    ('rrt_star',          run_rrt_star),
-    ('rrt_star_smooth',   run_rrt_star_smooth),
-    ('rrt_star_dubins',   run_rrt_star_dubins),
-    ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    # ('rrt_star',          run_rrt_star),
+    # ('rrt_star_smooth',   run_rrt_star_smooth),
+    # ('rrt_star_dubins',   run_rrt_star_dubins),
+    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
     ('bit_star_dubins',   run_bit_star_dubins),
     ('de2d_nurbs',        run_de2d_nurbs),
-    ('pso2d_nurbs',       run_pso2d_nurbs),
+    # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
 
@@ -370,43 +370,40 @@ def _run_single_task(sc, pname, runner_fn):
     collision_free = result.get('collision_free', False)
     cv_opt = result.get('cv_opt', np.nan)
 
-    # For DE/PSO: use the optimizer's own CV (reflects actual constraint handling)
-    if not np.isnan(cv_opt):
-        feasible = cv_opt < 1e-6
-        cv_val = float(cv_opt)
+    # --- Post-hoc feasibility for ALL planners ---
+    # (not the optimizer's internal CV, which can be > 1e-6 for
+    #  visually-feasible paths due to numerical curvature artifacts)
+    if not np.isnan(max_kappa):
+        kappa_respected = max_kappa <= c.kappa_max * 1.05 + 1e-6
+        kappa_viol = 0.0 if kappa_respected else (max_kappa - c.kappa_max) ** 2
+    elif pts is not None and len(np.asarray(pts)) >= 2:
+        kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
+        kappa_respected = kappa_viol < 1e-6
     else:
-        # For RRT-based: compute post-hoc violation
-        if not np.isnan(max_kappa):
-            kappa_respected = max_kappa <= c.kappa_max * 1.05 + 1e-6
-            kappa_viol = 0.0 if kappa_respected else (max_kappa - c.kappa_max) ** 2
-        elif pts is not None and len(np.asarray(pts)) >= 2:
-            kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
-            kappa_respected = kappa_viol < 1e-6
-        else:
-            kappa_viol = np.nan
-            kappa_respected = False
+        kappa_viol = np.nan
+        kappa_respected = False
 
-        ws_viol = 0.0
-        if pts is not None and len(np.asarray(pts)) >= 2:
-            a = np.asarray(pts)
-            ws_viol = float(np.sum(
-                (a[:, 0] < c.xmin) | (a[:, 0] > c.xmax) |
-                (a[:, 1] < c.ymin) | (a[:, 1] > c.ymax)
-            ))
+    ws_viol = 0.0
+    if pts is not None and len(np.asarray(pts)) >= 2:
+        a = np.asarray(pts)
+        ws_viol = float(np.sum(
+            (a[:, 0] < c.xmin) | (a[:, 0] > c.xmax) |
+            (a[:, 1] < c.ymin) | (a[:, 1] > c.ymax)
+        ))
 
-        obs_viol = 0.0
-        if not collision_free and pts is not None and len(np.asarray(pts)) >= 2:
-            a = np.asarray(pts)
-            if hasattr(c, 'obs') and c.obs is not None:
-                for ob in c.obs:
-                    ox, oy, size = ob[0], ob[1], ob[2]
-                    d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
-                    pen = np.maximum(0, size + c.radius - d)
-                    if np.any(pen > 0):
-                        obs_viol += float(np.sum(pen ** 2))
+    obs_viol = 0.0
+    if not collision_free and pts is not None and len(np.asarray(pts)) >= 2:
+        a = np.asarray(pts)
+        if hasattr(c, 'obs') and c.obs is not None:
+            for ob in c.obs:
+                ox, oy, size = ob[0], ob[1], ob[2]
+                d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
+                pen = np.maximum(0, size + c.radius - d)
+                if np.any(pen > 0):
+                    obs_viol += float(np.sum(pen ** 2))
 
-        feasible = collision_free and kappa_respected and ws_viol < 0.5
-        cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
+    feasible = collision_free and kappa_respected and ws_viol < 0.5
+    cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
 
     record = dict(
         scenario=label, seed=seed, planner=pname,
@@ -416,6 +413,7 @@ def _run_single_task(sc, pname, runner_fn):
         elapsed=result.get('elapsed', total_time),
         collision_free=result.get('collision_free', False),
         cv=cv_val,
+        cv_opt=cv_opt,
         feasible=feasible,
         n_obs=len(c.obs) if hasattr(c, 'obs') else 0,
     )
@@ -679,7 +677,7 @@ def main():
       python compare_rrt_de2d_nurbs.py -j 4        # 4 workers
       python compare_rrt_de2d_nurbs.py -j -1       # all cores
     """
-    n_jobs = 1
+    n_jobs = 21
     argv = sys.argv[1:]
     if argv and argv[0] == '-j' and len(argv) > 1:
         n_jobs = int(argv[1])
