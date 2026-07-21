@@ -134,7 +134,7 @@ def run_rrt_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.0):
+def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.10):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -150,7 +150,7 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.0):
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=1000,
+        goal_sample_rate=20, max_iter=10000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
@@ -178,7 +178,7 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.0):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=2.0):
+def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=1.10):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -194,7 +194,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=2
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=1000,
+        goal_sample_rate=20, max_iter=30000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
@@ -227,7 +227,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=2
 
     waypoints = np.array([[n.x, n.y] for n in nodes_path])
 
-    ccpoa = CCPOA(curvature=config.kappa_max, max_iter=5, tol=1e-6,
+    ccpoa = CCPOA(curvature=config.kappa_max, max_iter=500, tol=1e-6,
                   step_size=0.05)
     opt_path, theta_opt = ccpoa.optimize(
         waypoints, config.th_start, config.th_goal)
@@ -449,7 +449,7 @@ PLANNERS = [
     ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
     ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
     ('bit_star_dubins',   run_bit_star_dubins),
-    ('de2d_nurbs',        run_de2d_nurbs),
+    # ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 

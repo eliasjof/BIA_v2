@@ -15,7 +15,7 @@ class CCPOA:
     Based on Section 3.2 of Wang et al. (2026).
     """
 
-    def __init__(self, curvature, max_iter=5, tol=1e-6, step_size=0.05):
+    def __init__(self, curvature, max_iter=100, tol=1e-6, step_size=0.05):
         self.curvature = curvature
         self.r = 1.0 / curvature if curvature > 0 else float('inf')
         self.max_iter = max_iter
