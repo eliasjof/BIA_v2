@@ -279,7 +279,7 @@ class DE2D_NURBS:
             if is_circle:
                 dists = check_collisions_cylinderBT(pts, expanded_obs, r)
                 n_segs = len(dists)
-                inside_len = np.sum(np.array(dists)**2) if n_segs > 0 else 0.0
+                inside_len = np.sum(np.array(dists)**2) + n_segs if n_segs > 0 else 0.0
             else:
                 n_segs, inside_len, _, _ = detailed_collision_with_polygons(
                     pts, expanded_obs)
