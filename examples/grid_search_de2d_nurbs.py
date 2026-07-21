@@ -68,8 +68,9 @@ def plot_results(agg):
 
     for idx, aw in enumerate(aw_vals):
         ax = axes[0, idx]
-        sub = agg[agg["alpha_workspace"] == aw].pivot(
-            index="alpha_obs", columns="alpha_kappa", values="comp_medio")
+        sub = agg[agg["alpha_workspace"] == aw].pivot_table(
+            index="alpha_obs", columns="alpha_kappa", values="comp_medio",
+            aggfunc="mean")
         sub = sub.reindex(index=ao_vals, columns=ak_vals)
         im = ax.imshow(sub.values, aspect="auto", origin="lower", norm=norm,
                        cmap="viridis_r")
@@ -121,10 +122,11 @@ def plot_results(agg):
     plt.show()
 
 
-def _run_single(params, run, scenario_seed, n_generations, idx):
-    seed = scenario_seed + idx
+def _run_single(params, run, n_generations, run_configs, idx):
+    scen = run_configs[run]
     config = ScenarioConfig()
-    config.seed = seed
+    config.seed = scen["seed"]
+    config.occupancy_rate = scen["occupancy"]
     config.start = np.array([-1.4, -0.8])
     config.goal = np.array([1.4, 0.8])
     config.th_start = np.deg2rad(0)
@@ -155,6 +157,7 @@ def _run_single(params, run, scenario_seed, n_generations, idx):
         "alpha_obs": params["alpha_obs"],
         "alpha_workspace": params["alpha_workspace"],
         "run": run,
+        "occupancy": scen["occupancy"],
     }
     if eval is None:
         row["success"] = False
@@ -171,20 +174,30 @@ def _run_single(params, run, scenario_seed, n_generations, idx):
 
 def main():
     param_grid = {
-        "pop_size": [30],
-        "alpha_kappa": [0.1, 0.5, 1.0],
+        "pop_size": [50, 80, 100, 120, 150],
+        "alpha_kappa": [0.1, 0.5, 1.0, 10.0],
         "alpha_obs": [1.0, 10.0, 100.0, 500.0],
         "alpha_workspace": [0.1, 1.0, 10.0],
     }
-    N_RUNS = 3
-    SCENARIO_SEED = 10
-    N_GENERATIONS = 5
-    N_JOBS = -1
+    N_RUNS = 10
+    N_GENERATIONS = 200
+    N_JOBS = 20
+    BASE_SEED = 10
+
+    # Cada run usa seed e ocupação diferentes — TODAS as combinações
+    # enfrentam o MESMO conjunto de cenários, permitindo comparação justa.
+    run_configs = [
+        {"seed": BASE_SEED + r, "occupancy": round(0.05 * (r + 1), 2)}
+        for r in range(N_RUNS)
+    ]
 
     grid = list(ParameterGrid(param_grid))
     total = len(grid) * N_RUNS
-    print(f"Total combinations: {len(grid)} x {N_RUNS} runs = {total} "
-          f"(n_jobs={N_JOBS})")
+    print(f"Param grid: {len(grid)} combos x {N_RUNS} runs = {total}")
+    print(f"Scenario configs por run:")
+    for r, sc in enumerate(run_configs):
+        print(f"  run {r}: seed={sc['seed']:2d}, occupancy={sc['occupancy']:.2f}")
+    print(f"n_jobs={N_JOBS}")
     print()
 
     t0 = time.time()
@@ -193,7 +206,7 @@ def main():
     idx = 0
     for params in grid:
         for run in range(N_RUNS):
-            tasks.append((params, run, SCENARIO_SEED, N_GENERATIONS, idx))
+            tasks.append((params, run, N_GENERATIONS, run_configs, idx))
             idx += 1
 
     results = Parallel(n_jobs=N_JOBS, verbose=10)(
@@ -205,7 +218,6 @@ def main():
     df.to_csv(csv_path, index=False)
     print(f"\nResultados salvos em: {csv_path}")
 
-    # Agrega por combinação (média das runs)
     agg = df.groupby(["pop_size", "alpha_kappa", "alpha_obs", "alpha_workspace"]).agg(
         success_rate=("success", "mean"),
         comp_medio=("comprimento", "mean"),
@@ -223,7 +235,6 @@ def main():
     pd.set_option("display.float_format", lambda x: "%.3f" % x)
     print(agg.to_string(index=False))
 
-    # Melhores combinações: sem falhas, com menor violação total
     validos = agg[agg["success_rate"] == 1.0].copy()
     if len(validos) > 0:
         validos["score"] = validos["comp_medio"] * (1 + validos["total_viol_medio"])

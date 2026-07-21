@@ -527,15 +527,22 @@ colors = ["darkblue", "yellow"]
 custom_cmap = LinearSegmentedColormap.from_list("yellow_blue_cmap", colors)
 
 class LSHADE_COP:
-    def __init__(self, pop_size, dim, max_fes, xmin, xmax, func=None, H=5, tolerance=1e-5, initial_pop=None, type_mean=2, type_mutation=1, type_sharing='best', static_params = None, dimension=2, color='blue', id=0, DEBUG=0, **kwargs):
+    def __init__(self, pop_size, dim, max_fes=None, n_generations=None, xmin=None, xmax=None, func=None, H=5, tolerance=1e-5, initial_pop=None, type_mean=2, type_mutation=1, type_sharing='best', static_params = None, dimension=2, color='blue', id=0, DEBUG=0, **kwargs):
         self.pop_size = pop_size
         self.max_pop_size = pop_size
         self.min_pop_size = 4
         self.r_arc = 1.5#2.6*3
-        self.dim = dim        
-        self.max_fes = max_fes
-        self.xmin = xmin
-        self.xmax = xmax
+        self.dim = dim
+        self.n_generations = n_generations
+        self.max_fes_provided = max_fes is not None
+        if max_fes is not None:
+            self.max_fes = max_fes
+        elif n_generations is not None:
+            self.max_fes = n_generations * pop_size
+        else:
+            self.max_fes = None
+        self.xmin = xmin if xmin is not None else np.zeros(dim)
+        self.xmax = xmax if xmax is not None else np.ones(dim)
         self.H = H
         self.tolerance = tolerance
         self.fes = 0
@@ -802,8 +809,12 @@ class LSHADE_COP:
     def run(self, shared_pop):
         self.S_CR = 0.5*np.ones(self.pop_size)
         self.S_F  = 0.5*np.ones(self.pop_size)
-        while self.fes <= self.max_fes:
-            self.evolve(shared_pop)
+        if self.n_generations is not None and not self.max_fes_provided:
+            while self.gen < self.n_generations:
+                self.evolve(shared_pop)
+        else:
+            while self.fes <= self.max_fes:
+                self.evolve(shared_pop)
 
     def evolve(self, shared_pop=[], keep_individual=None):
         F = []
