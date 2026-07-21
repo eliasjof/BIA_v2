@@ -535,11 +535,11 @@ class LSHADE_COP:
         self.dim = dim        
         self.reset_evolution = reset_evolution
         self.n_generations = n_generations
-        if n_generations is not None:
-            self.max_fes = n_generations * pop_size
-        else:
-            self.max_fes = max_fes if max_fes is not None else 0
-
+        # if n_generations is not None:
+        #     self.max_fes = n_generations * pop_size
+        # else:
+        #     self.max_fes = max_fes if max_fes is not None else 0
+        self.max_fes = max_fes 
         self._init_pop_size = pop_size
         self.xmin = xmin
         self.xmax = xmax
@@ -587,7 +587,7 @@ class LSHADE_COP:
         self._init_M_F = self.M_F.copy()
         
         # Initialize constraints and mutation settings
-        self.Tc = 0.8 * self.max_fes
+        # self.Tc = 0.8 * self.max_fes
         self.epsilon_0 = None
         self.epsilon = None
         self.nfeasible = 0
@@ -1026,11 +1026,11 @@ class LSHADE_COP:
         
         
 
-        # Update epsilon
-        if self.fes < self.Tc:
-            self.epsilon = self.epsilon_0 * (1 - self.fes / self.Tc)**5
-        else:
-            self.epsilon = 0
+        # # Update epsilon
+        # if self.fes < self.Tc:
+        #     self.epsilon = self.epsilon_0 * (1 - self.fes / self.Tc)**5
+        # else:
+        #     self.epsilon = 0
 
         # Sort population based on constraints
         self.P_c, self.P_fe, self.f, self.g, self.h, self.CV, self.best_unfesible = self.sort_pop_CV(
@@ -1042,10 +1042,17 @@ class LSHADE_COP:
         # Resizing population and archive size
         if self.fes > 0.0 * self.max_pop_size:
             # Calculate the new population size based on the current fes
-            ps = max(
-                round(self.min_pop_size + (1 - (self.fes / self.max_fes)) * (self.max_pop_size - self.min_pop_size)), 
-                self.min_pop_size
-            )
+
+            if self.n_generations is None:
+                ps = max(
+                    round(self.min_pop_size + (1 - (self.fes / self.max_fes)) * (self.max_pop_size - self.min_pop_size)), 
+                    self.min_pop_size
+                )
+            else:
+                ps = max(
+                    round(self.min_pop_size + (1 - (self.gen / self.n_generations)) * (self.max_pop_size - self.min_pop_size)), 
+                    self.min_pop_size
+                )
             self.pop_size = ps
             
             # Ensure ps does not exceed the current population size
