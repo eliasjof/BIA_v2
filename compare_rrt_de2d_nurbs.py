@@ -48,6 +48,34 @@ def check_collision_path(path, obstacle_list, robot_radius):
     return is_collision_free(path, obstacle_list, robot_radius)
 
 
+def compute_path_cv(pts, config):
+    if pts is None or len(pts) < 2:
+        return np.nan
+    a = np.asarray(pts)
+    dx = np.gradient(a[:, 0])
+    dy = np.gradient(a[:, 1])
+    ddx = np.gradient(dx)
+    ddy = np.gradient(dy)
+    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+    kappa_viol = np.sum(np.maximum(0, k - config.kappa_max) ** 2)
+
+    ws_viol = np.sum(
+        (a[:, 0] < config.xmin) | (a[:, 0] > config.xmax) |
+        (a[:, 1] < config.ymin) | (a[:, 1] > config.ymax)
+    )
+
+    obs_viol = 0.0
+    if hasattr(config, 'obs') and config.obs is not None:
+        for ob in config.obs:
+            ox, oy, size = ob[0], ob[1], ob[2]
+            d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
+            pen = np.maximum(0, size + config.radius - d)
+            if np.any(pen > 0):
+                obs_viol += np.sum(pen ** 2)
+
+    return float(kappa_viol + obs_viol + ws_viol)
+
+
 # ──────────────────────────────────────────────
 # Planner runners
 # ──────────────────────────────────────────────
@@ -85,7 +113,7 @@ def run_rrt_star(config, seed=None):
 
 
 def run_rrt_star_dubins(config, seed=None):
-    kw = dict(max_iter=300, connect_circle_dist=4.5,
+    kw = dict(max_iter=2000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
@@ -163,7 +191,7 @@ def run_rrt_star_smooth(config, seed=None, n_waypoints=20, s=0.015):
 
 
 def run_rrt_dubins_smooth(config, seed=None, n_waypoints=20, s=0.015):
-    kw = dict(max_iter=300, connect_circle_dist=4.5,
+    kw = dict(max_iter=2000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
@@ -206,7 +234,7 @@ def run_rrt_dubins_smooth(config, seed=None, n_waypoints=20, s=0.015):
 
 
 def run_bit_star_dubins(config, seed=None):
-    kw = dict(max_iter=500, connect_circle_dist=4.5,
+    kw = dict(max_iter=2000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True,
@@ -319,6 +347,17 @@ def make_scenario(seed, obs_list=None, start=None, goal=None,
     config.kappa_max = kappa_max
     config.th_start = th_start
     config.th_goal = th_goal
+    config.n_generations = 200
+    config.pop_size = 100
+    config.nsampling = 120
+    config.scale_x = 2.0
+    config.scale_y = 2.0
+    config.xmin = -2.0
+    config.xmax = 2.0
+    config.ymin = -2.0
+    config.ymax = 2.0
+    config.lambda_i = config.radius
+    config.lambda_f = config.radius
     if start is not None:
         config.start = np.asarray(start, dtype=float)
     if goal is not None:
@@ -434,6 +473,7 @@ def run_comparison(scenario_configs, planners=PLANNERS,
                 th_goal=sc.get('th_goal', 0.0),
                 radius=sc.get('radius', 0.073),
                 kappa_max=sc.get('kappa_max', 1/0.73),
+                
             )
 
             t_start = time.perf_counter()
@@ -452,6 +492,13 @@ def run_comparison(scenario_configs, planners=PLANNERS,
             result.setdefault('max_kappa', np.nan)
             result.setdefault('collision_free', False)
 
+            pts = result.get('path')
+            c.setup()
+            cv_val = (compute_path_cv(pts, c)
+                      if pts is not None and len(np.asarray(pts)) >= 2
+                      else np.nan)
+            feasible_val = not np.isnan(cv_val) and cv_val < 1e-6
+
             record = dict(
                 scenario=label, seed=seed, planner=pname,
                 success=result['success'],
@@ -459,6 +506,8 @@ def run_comparison(scenario_configs, planners=PLANNERS,
                 max_kappa=result.get('max_kappa', np.nan),
                 elapsed=result.get('elapsed', total_time),
                 collision_free=result.get('collision_free', False),
+                cv=cv_val,
+                feasible=feasible_val,
                 n_obs=len(c.obs) if hasattr(c, 'obs') else 0,
             )
             all_records.append(record)
@@ -527,18 +576,45 @@ def load_results(output_dir='comparison_results'):
 # ──────────────────────────────────────────────
 
 def print_summary(df):
-    print('\n=== SUMMARY ===')
-    grouped = df.groupby('planner').agg(
-        success_rate=('success', 'mean'),
-        avg_length=('length', 'mean'),
-        std_length=('length', 'std'),
-        avg_kappa=('max_kappa', 'mean'),
-        max_kappa=('max_kappa', 'max'),
-        avg_time=('elapsed', 'mean'),
-        collision_free_rate=('collision_free', 'mean'),
-        count=('success', 'count'),
-    ).round(3)
-    print(grouped.to_string())
+    print('\n=== RANKING (lower avg_rank = better) ===')
+    rank_rows = []
+    for scenario, grp in df.groupby('scenario', sort=False):
+        grp = grp.sort_values(
+            ['feasible', 'length', 'elapsed'],
+            ascending=[False, True, True],
+            na_position='last',
+        )
+        for rank, (_, row) in enumerate(grp.iterrows(), 1):
+            rank_rows.append(dict(scenario=scenario, planner=row['planner'], rank=rank))
+    rank_df = pd.DataFrame(rank_rows)
+    ranking = (
+        rank_df.groupby('planner')['rank']
+        .agg(['mean', 'std', 'min', 'max', 'count'])
+        .round(3)
+        .sort_values('mean')
+    )
+    ranking.columns = ['avg_rank', 'std_rank', 'best', 'worst', 'count']
+    print(ranking.to_string())
+
+    print('\n=== AGGREGATED METRICS ===')
+    fea = df[df['feasible']]
+    grp = df.groupby('planner')
+    rows = []
+    for name, g in grp:
+        feas_mask = g['feasible']
+        feasible_len = g.loc[feas_mask, 'length']
+        rows.append(dict(
+            planner=name,
+            success_rate=g['success'].mean(),
+            feasible_rate=feas_mask.mean(),
+            avg_length=g['length'].mean(),
+            avg_length_fea=feasible_len.mean() if len(feasible_len) else np.nan,
+            avg_cv=g['cv'].mean(),
+            avg_time=g['elapsed'].mean(),
+        ))
+    agg = pd.DataFrame(rows).set_index('planner').round(3)
+    agg = agg.sort_values(['feasible_rate', 'avg_length'], ascending=[False, True])
+    print(agg.to_string())
 
 
 # ──────────────────────────────────────────────
@@ -552,7 +628,7 @@ def main():
     ``(name, scenario_list)`` pair; the comparison runs for each entry and
     saves results under ``comparison_results/<name>/``.
     """
-    seeds = [2, 4, 5]
+    seeds = [2, 4, 5, 10]
 
     experiments = [
         # 1) No obstacles
