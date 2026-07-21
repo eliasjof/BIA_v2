@@ -8,7 +8,11 @@ from joblib import Parallel, delayed
 from scenario_config import ScenarioConfig
 from rrt_based.rrt_planner import RRTPlanner, angle_mod
 from de2d_nurbs import DE2D_NURBS
-from pso2d_nurbs import PSO2D_NURBS
+try:
+    from pso2d_nurbs import PSO2D_NURBS
+    _HAVE_PSO = True
+except ImportError:
+    _HAVE_PSO = False
 
 
 # ──────────────────────────────────────────────
@@ -30,7 +34,7 @@ def max_curvature_numerical(path):
     dy = np.gradient(a[:, 1])
     ddx = np.gradient(dx)
     ddy = np.gradient(dy)
-    k = np.abs(dx * ddy - dy * ddx) / ((dx**2 + dy**2)**1.5 + 1e-10)
+    k = np.abs(dx * ddy - dy * ddx) / ((dx**2 + dy**2)**1.5 + 1e-8)
     return float(k.max())
 
 
@@ -55,7 +59,7 @@ def _numerical_curvature_violation(pts, kappa_max):
     dy = np.gradient(a[:, 1])
     ddx = np.gradient(dx)
     ddy = np.gradient(dy)
-    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-8)
     return float(np.sum(np.maximum(0, k - kappa_max) ** 2))
 
 
@@ -282,10 +286,11 @@ def run_de2d_nurbs(config, seed=None):
     length = path_length(pts)
     k_max = max_curvature_numerical(pts)
     col_free = is_collision_free(pts, config.obs, config.radius)
+    cv_opt = _optimizer_cv(de.agent)
 
     return dict(path=pts, raw_path=pts, elapsed=elapsed, success=True,
                 length=length, max_kappa=k_max, collision_free=col_free,
-                cv_opt=_optimizer_cv(de.agent))
+                cv_opt=cv_opt)
 
 
 def run_pso2d_nurbs(config, seed=None):
