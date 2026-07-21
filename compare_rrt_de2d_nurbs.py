@@ -454,7 +454,7 @@ def make_scenario(seed, obs_list=None, start=None, goal=None,
     config.lambda_f = config.radius
     config.alpha_workspace = 10
     config.alpha_obs = 10
-    config.alpha_kappa = 0.5
+    config.alpha_kappa = 5.0
     if start is not None:
         config.start = np.asarray(start, dtype=float)
     if goal is not None:
