@@ -279,17 +279,14 @@ def check_collisions_cylinderBT(points_curve, cylinders, r=0.1):
     (i.e. *expanded_obstacles*). The *r* parameter is ignored and kept
     only for backward compatibility.
     """
-    centers = np.array([[c[0], c[1]] for c in cylinders])
-    radii = np.array([c[2] for c in cylinders])
-    bt = BallTree(centers, leaf_size=40)
-
-    min_distances, indices = bt.query(points_curve[:,:2], k=len(cylinders))
     dobs = []
-    for dist, ii in zip(min_distances, indices):
-        for i, dist_i in enumerate(dist):
-            idx = ii[i]
-            if dist_i < radii[idx]:
-                dobs.append(radii[idx] - dist_i)  # penetration depth
+    pts = np.asarray(points_curve)
+    for ob in cylinders:
+        ox, oy, size = ob[0], ob[1], ob[2]
+        d = np.hypot(pts[:, 0] - ox, pts[:, 1] - oy)
+        inside = d < size
+        if np.any(inside):
+            dobs.extend((size - d[inside]).tolist())
     return dobs
 
 def check_collision_cylinder2line(curve, obs_cylinders, r, debug=0, tol=1):

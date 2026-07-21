@@ -350,9 +350,9 @@ def _run_single_task(sc, pname, runner_fn):
         th_goal=sc.get('th_goal', 0.0),
         radius=sc.get('radius', 0.073),
         kappa_max=sc.get('kappa_max', 1/0.73),
-        n_generations=sc.get('n_generations', 200),
+        n_generations=sc.get('n_generations', 400),
         pop_size=sc.get('pop_size', 100),
-        nsampling=sc.get('nsampling', 120),
+        nsampling=sc.get('nsampling', 110),
     )
     c.setup()
 
@@ -397,7 +397,7 @@ def _run_single_task(sc, pname, runner_fn):
         ))
 
     obs_viol = 0.0
-    if not collision_free and pts is not None and len(np.asarray(pts)) >= 2:
+    if pts is not None and len(np.asarray(pts)) >= 2:
         a = np.asarray(pts)
         if hasattr(c, 'obs') and c.obs is not None:
             for ob in c.obs:
@@ -407,7 +407,7 @@ def _run_single_task(sc, pname, runner_fn):
                 if np.any(pen > 0):
                     obs_viol += float(np.sum(pen ** 2))
 
-    feasible = collision_free and kappa_respected and ws_viol < 0.5
+    feasible = (obs_viol < 1e-6) and kappa_respected and ws_viol < 0.5
     cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
 
     record = dict(
@@ -439,7 +439,7 @@ def _run_single_task(sc, pname, runner_fn):
 
 def make_scenario(seed, obs_list=None, start=None, goal=None,
                   th_start=0.0, th_goal=0.0, radius=0.073, kappa_max=1/0.73,
-                  n_generations=200, pop_size=100, nsampling=120):
+                  n_generations=450, pop_size=100, nsampling=120):
     config = ScenarioConfig()
     config.seed = seed
     config.radius = radius
@@ -449,17 +449,33 @@ def make_scenario(seed, obs_list=None, start=None, goal=None,
     config.n_generations = n_generations
     config.pop_size = pop_size
     config.nsampling = nsampling
-    config.scale_x = 2.0
-    config.scale_y = 2.0
-    config.xmin = -2.0
-    config.xmax = 2.0
-    config.ymin = -2.0
-    config.ymax = 2.0
+    # 
+    config.width = config.scale_x*2
+    config.height = config.scale_y*2
+    config.max_fes = None
+    
+    
+    
+    
     config.lambda_i = config.radius
     config.lambda_f = config.radius
-    config.alpha_workspace = 10
-    config.alpha_obs = 10
-    config.alpha_kappa = 5.0
+    config.alpha_workspace = 5
+    config.alpha_obs = 40
+    config.alpha_kappa = 5
+
+    # print(f'  Scenario seed={seed}  radius={radius:.3f}  kappa_max={kappa_max:.3f},  n_generations={n_generations}  pop_size={pop_size}  nsampling={nsampling} lambda_i={config.lambda_i:.3f}  lambda_f={config.lambda_f:.3f}  alpha_workspace={config.alpha_workspace:.3f}  alpha_obs={config.alpha_obs:.3f}  alpha_kappa={config.alpha_kappa:.3f}')
+    
+    config.scale_x = 2.1
+    config.scale_y = 2.1
+    config.xmin = -2.1
+    config.xmax = 2.1
+    config.ymin = -2.1
+    config.ymax = 2.1
+    config.start = np.array([-1.4, -0.8])
+    config.goal = np.array([1.4, 0.8])
+    config.th_start = 0.0
+    config.th_goal = 0.0
+    config.safe_radius = 0.4
     if start is not None:
         config.start = np.asarray(start, dtype=float)
     if goal is not None:
@@ -692,7 +708,7 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = [2, 4, 5, 10]
+    seeds = list(range(15)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # 1) No obstacles
@@ -704,7 +720,7 @@ def main():
 
         # 3) 1 → 5 obstacles from a progressive pool
         ('progressive', scenarios_progressive(
-            seeds, max_obs=5, pool_seed=42, center_size=0.35)),
+            seeds, max_obs=6, pool_seed=42, center_size=0.35)),
     ]
 
     # ── Uncomment any line below to add more experiments ──
