@@ -935,16 +935,24 @@ class ModifiedDubinsRRTStar(RRTStarDubins):
     two-stage DMPA pipeline from the paper.
     """
 
-    def __init__(self, *args, eta1=0.3, **kwargs):
+    def __init__(self, *args, eta1=0.3, safety_radius_factor=2.0, **kwargs):
         """
         eta1 : float, default 0.3
             Sampling probability used in ModifiedSample (Algorithm 9): with
             probability `eta1` a random (x, y) is drawn (with the yaw rule
             above); otherwise the goal pose itself is sampled. This mirrors
             the paper's use of eta1 = 0.3 in their simulations (Section 4.1).
+        safety_radius_factor : float, default 2.0
+            Multiplier applied to the turning radius when computing the
+            safety margin in the straight-line collision check (Algorithm 8
+            / Theorem 1).  The paper uses 2.0 (i.e. r_safe = 2*r for
+            d >= 4r, 4*r for d < 4r).  Lower values (e.g. 1.0) make the
+            check less conservative, accepting more paths at the cost of a
+            weaker collision guarantee.
         """
         super().__init__(*args, **kwargs)
         self.eta1 = eta1
+        self.safety_radius_factor = safety_radius_factor
 
     # ---- Algorithm 9: ModifiedSample -----------------------------------
     def get_random_node(self):
@@ -961,8 +969,8 @@ class ModifiedDubinsRRTStar(RRTStarDubins):
     def _safety_radius(self, d):
         r = 1.0 / self.curvature
         if d >= 4 * r:
-            return 2 * r
-        return 4 * r
+            return self.safety_radius_factor * r
+        return 2 * self.safety_radius_factor * r
 
     @staticmethod
     def _point_segment_distance(px, py, x1, y1, x2, y2):

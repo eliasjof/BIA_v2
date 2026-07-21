@@ -134,7 +134,7 @@ def run_rrt_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star(config, seed=None):
+def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=2.0):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -155,7 +155,8 @@ def run_modified_dubins_rrt_star(config, seed=None):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        eta1=0.3)
+        eta1=0.3,
+        safety_radius_factor=safety_radius_factor)
     raw = planner.planning(animation=False, search_until_max_iter=False)
     elapsed = time.perf_counter() - t0
 
@@ -177,7 +178,7 @@ def run_modified_dubins_rrt_star(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star_ccpoa(config, seed=None):
+def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=2.0):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -198,7 +199,8 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        eta1=0.3)
+        eta1=0.3,
+        safety_radius_factor=safety_radius_factor)
     raw = planner.planning(animation=False, search_until_max_iter=False)
     mdr_elapsed = time.perf_counter() - t0
 
