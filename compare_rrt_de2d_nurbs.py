@@ -462,6 +462,11 @@ def run_pso2d_nurbs(config, seed=None):
         config.seed = seed
 
     t0 = time.perf_counter()
+    config.n_generations = 500
+    config.pop_size = 100
+    config.alpha_obs = 1000
+    config.alpha_kappa = 10.00
+
     pso = PSO2D_NURBS(config)
     try:
         pso.run()
@@ -470,7 +475,7 @@ def run_pso2d_nurbs(config, seed=None):
                     success=False, length=np.nan, max_kappa=np.nan,
                     collision_free=False, cv_opt=np.nan)
     elapsed = time.perf_counter() - t0
-
+    pso.plot_convergence()
     result = pso.get_best_path()
     if result is None:
         return dict(path=None, raw_path=None, elapsed=elapsed,
@@ -492,15 +497,15 @@ def run_pso2d_nurbs(config, seed=None):
 # ──────────────────────────────────────────────
 
 PLANNERS = [
-    # ('rrt_star',          run_rrt_star),
-    # ('rrt_star_smooth',   run_rrt_star_smooth),
-    # ('rrt_star_dubins',   run_rrt_star_dubins),
+    ('rrt_star',          run_rrt_star),
+    ('rrt_star_smooth',   run_rrt_star_smooth),
+    ('rrt_star_dubins',   run_rrt_star_dubins),
     # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
     # ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
-    # ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+    ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
     ('rrt_star_asv',      run_rrt_star_asv),
-    ('bit_star_dubins',   run_bit_star_dubins),
-    # ('de2d_nurbs',        run_de2d_nurbs),
+    # ('bit_star_dubins',   run_bit_star_dubins),
+    ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
@@ -543,12 +548,11 @@ def _run_single_task(sc, pname, runner_fn):
     cv_opt = result.get('cv_opt', np.nan)
 
     # --- Post-hoc feasibility for ALL planners ---
-    # (not the optimizer's internal CV, which can be > 1e-6 for
-    #  visually-feasible paths due to numerical curvature artifacts)
-    if not np.isnan(max_kappa):
-        kappa_respected = max_kappa <= c.kappa_max * 1.05 + 1e-6
-        kappa_viol = 0.0 if kappa_respected else (max_kappa - c.kappa_max) ** 2
-    elif pts is not None and len(np.asarray(pts)) >= 2:
+    # Use gradient-based curvature violation (same method as the
+    # optimizer's individual_cost_function) for consistency.
+    # Avoids discrepancies from different curvature estimators
+    # (e.g. Menger vs gradient).
+    if pts is not None and len(np.asarray(pts)) >= 2:
         kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
         kappa_respected = kappa_viol < 1e-6
     else:
@@ -707,7 +711,7 @@ def scenarios_progressive(seeds, max_obs=10, pool_seed=42, center_size=0.35,
     pool = generate_obstacle_pool(max_obs, pool_seed, center_size)
     sc = []
     for s in seeds:
-        for k in range(1, max_obs + 1):
+        for k in range(0, max_obs + 1):
             sc.append(dict(seed=s, obs_list=pool[:k],
                            label=f'{label_prefix}{k:02d}_seed{s}'))
     return sc
@@ -876,7 +880,7 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(5)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(10)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles
@@ -888,7 +892,7 @@ def main():
 
         # 3) 1 → 5 obstacles from a progressive pool
         ('progressive', scenarios_progressive(
-            seeds, max_obs=3, pool_seed=22, center_size=0.3)),
+            seeds, max_obs=9, pool_seed=22, center_size=0.3)),
     ]
 
     # ── Uncomment any line below to add more experiments ──
