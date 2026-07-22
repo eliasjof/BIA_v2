@@ -259,7 +259,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_rrt_star_asv(config, seed=None, turning_cost_weight=0.5):
+def run_rrt_star_asv(config, seed=None, cost_a=1.0, cost_b=1.5):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -280,7 +280,7 @@ def run_rrt_star_asv(config, seed=None, turning_cost_weight=0.5):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        turning_cost_weight=turning_cost_weight)
+        cost_a=cost_a, cost_b=cost_b, max_nodes=500)
     raw = planner.planning(animation=False, search_until_max_iter=True)
     elapsed = time.perf_counter() - t0
 

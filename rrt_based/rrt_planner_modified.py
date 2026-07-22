@@ -771,7 +771,7 @@ class RRTStarDubins(RRTStar):
             if yaw_diff <= self.goal_yaw_th:
                 candidates.append((i, node.cost, 0.0))
                 continue
-            px, py, _, _, course_lengths = plan_dubins_path(
+            px, py, _, mode, course_lengths = plan_dubins_path(
                 node.x, node.y, node.yaw,
                 self.end.x, self.end.y, self.end.yaw,
                 self.curvature, step_size=self.step_size)
@@ -1156,7 +1156,7 @@ class RRTStarASV(RRTStar):
                  step_size=0.1,
                  rand_area_x=None, rand_area_y=None,
                  curvature=1.0 / 0.73,
-                 turning_cost_weight=0.0):
+                 cost_a=1.0, cost_b=1.5, max_nodes=200):
         self.start = self.Node(start[0], start[1], start[2])
         self.end = self.Node(goal[0], goal[1], goal[2])
         if rand_area_x is not None:
@@ -1179,7 +1179,9 @@ class RRTStarASV(RRTStar):
         self.goal_yaw_th = np.deg2rad(60)
         self.goal_xy_th = 0.2
         self.play_area = None
-        self.turning_cost_weight = turning_cost_weight
+        self.cost_a = cost_a
+        self.cost_b = cost_b
+        self.max_nodes = max_nodes
         self.node_list = []
 
     # -- Pure-Pursuit arc geometry -----------------------------------
@@ -1230,13 +1232,16 @@ class RRTStarASV(RRTStar):
                 pyaw.append(phi1)
         return px, py, pyaw
 
+    def _unit_cost(self, kappa):
+        """g(R_c) = 1 + a·exp(-b·(R_c - r_min)/r_min)   Eq.(9)-(10)."""
+        if abs(kappa) < 1e-12:
+            return 1.0
+        r_min = 1.0 / self.curvature
+        Rc = 1.0 / abs(kappa)
+        return 1.0 + self.cost_a * math.exp(-self.cost_b * (Rc - r_min) / r_min)
+
     def _turning_cost(self, kappa, s):
-        """Cost of an arc segment: length + penalty for sharp turns."""
-        base = abs(s)
-        if self.turning_cost_weight > 0 and abs(kappa) > 1e-12:
-            penalty = self.turning_cost_weight * (kappa / self.curvature) ** 2 * base
-            return base + penalty
-        return base
+        return self._unit_cost(kappa) * abs(s)
 
     # -- Steering ----------------------------------------------------
 
@@ -1295,22 +1300,21 @@ class RRTStarASV(RRTStar):
 
     def calc_new_cost_dubins(self, from_node, to_node):
         try:
-            _, _, _, _, course_lengths = plan_dubins_path(
+            _, _, _, mode, course_lengths = plan_dubins_path(
                 from_node.x, from_node.y, from_node.yaw,
                 to_node.x, to_node.y, to_node.yaw,
                 self.curvature, step_size=self.step_size)
-            cost = sum(abs(c) for c in course_lengths)
-            if self.turning_cost_weight > 0:
-                k_avg = sum(abs(c) for c in course_lengths[::2]) / max(sum(abs(c) for c in course_lengths), 1e-12)
-                penalty = self.turning_cost_weight * (k_avg * self.curvature) ** 2 * cost
-                cost += penalty
+            cost = 0.0
+            for m, l in zip(mode, course_lengths):
+                kappa = self.curvature if m in ('L', 'R') else 0.0
+                cost += self._unit_cost(kappa) * abs(l)
             return from_node.cost + cost
         except Exception:
             return float('inf')
 
     def choose_parent(self, new_node, near_indexes):
         if not near_indexes:
-            return None
+            return None, -1
         best_cost = float('inf')
         best_parent_index = -1
         for i in near_indexes:
@@ -1322,12 +1326,14 @@ class RRTStarASV(RRTStar):
                     best_cost = cost
                     best_parent_index = i
         if best_parent_index == -1:
-            return None
+            return None, -1
         new_node = self.steer(self.node_list[best_parent_index], new_node)
         new_node.cost = best_cost
-        return new_node
+        new_node.parent = self.node_list[best_parent_index]
+        return new_node, best_parent_index
 
     def rewire(self, new_node, near_indexes):
+        """PP-based rewire (não usado no loop principal — artigo diz que PP não funciona para rewire)."""
         for i in near_indexes:
             near_node = self.node_list[i]
             t_node = self.steer(new_node, near_node)
@@ -1343,8 +1349,10 @@ class RRTStarASV(RRTStar):
     # -- Dubins-based rewire (used after tree is built for better
     #    connections) ------------------------------------------------
 
-    def rewire_dubins(self, new_node, near_indexes):
+    def rewire_dubins(self, new_node, near_indexes, exclude_parent=-1):
         for i in near_indexes:
+            if i == exclude_parent:
+                continue
             near_node = self.node_list[i]
             t_node = self.steer_dubins(new_node, near_node)
             if t_node and self.check_collision(t_node, self.obstacle_list, self.robot_radius):
@@ -1374,7 +1382,10 @@ class RRTStarASV(RRTStar):
         new_node.path_yaw = pyaw
         new_node.mode = mode
         new_node.course_lengths = course_lengths
-        cost = sum(abs(c) for c in course_lengths)
+        cost = 0.0
+        for m, l in zip(mode, course_lengths):
+            kappa = self.curvature if m in ('L', 'R') else 0.0
+            cost += self._unit_cost(kappa) * abs(l)
         new_node.cost += cost
         new_node.parent = from_node
         return new_node
@@ -1393,10 +1404,11 @@ class RRTStarASV(RRTStar):
                     best_cost = cost
                     best_parent_index = i
         if best_parent_index == -1:
-            return None
+            return None, -1
         new_node = self.steer_dubins(self.node_list[best_parent_index], new_node)
         new_node.cost = best_cost
-        return new_node
+        new_node.parent = self.node_list[best_parent_index]
+        return new_node, best_parent_index
 
     # -- Goal connection & final path --------------------------------
 
@@ -1405,7 +1417,7 @@ class RRTStarASV(RRTStar):
         yaw_diff = abs(angle_mod(node.yaw - self.end.yaw))
         if d < 1e-4 and yaw_diff < 1e-3:
             return True, 0.0
-        px, py, _, _, course_lengths = plan_dubins_path(
+        px, py, _, mode, course_lengths = plan_dubins_path(
             node.x, node.y, node.yaw,
             self.end.x, self.end.y, self.end.yaw,
             self.curvature, step_size=self.step_size)
@@ -1415,7 +1427,10 @@ class RRTStarASV(RRTStar):
             for x, y in zip(px, py):
                 if math.hypot(x - ox, y - oy) <= size + self.robot_radius:
                     return False, None
-        dubins_cost = sum(abs(c) for c in course_lengths)
+        dubins_cost = 0.0
+        for m, l in zip(mode, course_lengths):
+            kappa = self.curvature if m in ('L', 'R') else 0.0
+            dubins_cost += self._unit_cost(kappa) * abs(l)
         return True, dubins_cost
 
     def search_best_goal_node(self):
@@ -1585,20 +1600,18 @@ class RRTStarASV(RRTStar):
             new_node = self.steer(nearest_node, rnd)
             if new_node and self.check_collision(new_node, self.obstacle_list, self.robot_radius):
                 near_indexes = self.find_near_nodes(new_node)
-                new_node = self.choose_parent(new_node, near_indexes)
+                new_node, parent_idx = self.choose_parent(new_node, near_indexes)
                 if new_node:
                     self.node_list.append(new_node)
-                    self.rewire(new_node, near_indexes)
-            if (not search_until_max_iter) and new_node:
+                    self.rewire_dubins(new_node, near_indexes, exclude_parent=parent_idx)
+            if not search_until_max_iter and new_node:
                 last_index = self.search_best_goal_node()
                 if last_index:
                     return self._build_final_path(last_index)
-
-        # Dubins-based rewire pass for smoother connections
-        for i in range(min(100, len(self.node_list))):
-            new_node = self.node_list[i]
-            near_indexes = self.find_near_nodes(new_node)
-            self.rewire_dubins(new_node, near_indexes)
+            # M-limit (Alg. 1): remove random node if tree exceeds max_nodes
+            if self.max_nodes > 0 and len(self.node_list) > self.max_nodes:
+                rem = random.randint(0, len(self.node_list) - 1)
+                self.node_list.pop(rem)
 
         last_index = self.search_best_goal_node()
         if last_index:

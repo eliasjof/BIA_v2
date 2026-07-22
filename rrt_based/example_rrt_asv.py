@@ -45,7 +45,7 @@ def run(com_obstaculo=False, max_iter=2500, seed=None, plot=False):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        turning_cost_weight=0.0,
+        cost_a=1.0, cost_b=1.5, max_nodes=500,
     )
 
     # ── plan ────────────────────────────────────────────────
