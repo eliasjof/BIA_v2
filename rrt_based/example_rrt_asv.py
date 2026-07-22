@@ -1,8 +1,11 @@
-import sys, pathlib, math, time, numpy as np, os
+import sys, pathlib, math, time, numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import matplotlib
-matplotlib.use("Agg")
+try:
+    matplotlib.use("TkAgg")
+except Exception:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 
@@ -10,7 +13,7 @@ from scenario_config import ScenarioConfig
 from rrt_based.rrt_planner_modified import RRTStarASV, angle_mod
 
 
-def run(com_obstaculo=False, max_iter=500, seed=None, plot=False):
+def run(com_obstaculo=False, max_iter=2500, seed=None, plot=False):
     # ── cenário ─────────────────────────────────────────────
     config = ScenarioConfig()
     config.radius = 0.073
@@ -147,21 +150,16 @@ def run(com_obstaculo=False, max_iter=500, seed=None, plot=False):
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
         fig.tight_layout()
-        fname = f"rrt_star_asv_{'obs' if com_obstaculo else 'free'}_{seed}.png"
-        # fig.savefig(fname, dpi=120)
-        print(f"  Plot salvo: {fname}")
-        # if os.environ.get("DISPLAY") or os.name == "nt":
-            # plt.show(block=False)
-        # plt.close(fig)
-        plt.show()
+        plt.show(block=True)
+        plt.close(fig)
 
 
 if __name__ == "__main__":
-    print(">>> Teste 1: ambiente livre, 500 iterações")
-    run(com_obstaculo=False, max_iter=500, seed=42, plot=True)
+    # print(">>> Teste 1: ambiente livre, 500 iterações")
+    # run(com_obstaculo=False, max_iter=500, seed=42, plot=True)
 
-    print(">>> Teste 2: com obstáculo, 500 iterações")
-    run(com_obstaculo=True, max_iter=500, seed=42, plot=True)
+    print(">>> Teste 2: com obstáculo, 2500 iterações")
+    run(com_obstaculo=True, max_iter=2500, seed=42, plot=True)
 
-    print(">>> Teste 3: ambiente livre, 1000 iterações")
-    run(com_obstaculo=False, max_iter=1000, seed=7, plot=True)
+    # print(">>> Teste 3: ambiente livre, 1000 iterações")
+    # run(com_obstaculo=False, max_iter=1000, seed=7, plot=True)

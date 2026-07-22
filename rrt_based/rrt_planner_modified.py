@@ -1177,7 +1177,7 @@ class RRTStarASV(RRTStar):
         self.robot_radius = robot_radius
         self.curvature = curvature
         self.goal_yaw_th = np.deg2rad(60)
-        self.goal_xy_th = 0.5
+        self.goal_xy_th = 0.2
         self.play_area = None
         self.turning_cost_weight = turning_cost_weight
         self.node_list = []

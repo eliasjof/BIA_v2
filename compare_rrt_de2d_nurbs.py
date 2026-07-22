@@ -275,7 +275,7 @@ def run_rrt_star_asv(config, seed=None, turning_cost_weight=0.5):
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=500,
+        goal_sample_rate=20, max_iter=2000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
