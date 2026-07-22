@@ -1131,6 +1131,391 @@ class ModifiedDubinsRRTStar(RRTStarDubins):
 
 
 # ═══════════════════════════════════════════════════════════════
+# 6b. RRT*ASV — Ackermann Steering Vehicle
+# ═══════════════════════════════════════════════════════════════
+
+class RRTStarASV(RRTStar):
+    """RRT*ASV: Improved RRT* for Ackermann steering vehicles.
+
+    Uses Pure-Pursuit geometry as the steering/wiring mechanism to
+    assign headings to new nodes, and Dubins curves during the RRT*
+    rewire stage.  A turning-cost function penalises small-radius arcs.
+    """
+
+    class Node(RRTStar.Node):
+        def __init__(self, x, y, yaw):
+            super().__init__(x, y)
+            self.yaw = yaw
+            self.path_yaw = []
+            self.mode = None
+            self.course_lengths = None
+
+    def __init__(self, start, goal, obstacle_list, rand_area,
+                 goal_sample_rate=10, max_iter=200,
+                 connect_circle_dist=50.0, robot_radius=0.0,
+                 step_size=0.1,
+                 rand_area_x=None, rand_area_y=None,
+                 curvature=1.0 / 0.73,
+                 turning_cost_weight=0.0):
+        self.start = self.Node(start[0], start[1], start[2])
+        self.end = self.Node(goal[0], goal[1], goal[2])
+        if rand_area_x is not None:
+            self.min_rand_x, self.max_rand_x = rand_area_x
+            self.min_rand_y, self.max_rand_y = rand_area_y if rand_area_y is not None else rand_area_x
+            self.min_rand = self.min_rand_x
+            self.max_rand = self.max_rand_x
+        else:
+            self.min_rand = rand_area[0]
+            self.max_rand = rand_area[1]
+            self.min_rand_x = self.min_rand_y = self.min_rand
+            self.max_rand_x = self.max_rand_y = self.max_rand
+        self.goal_sample_rate = goal_sample_rate
+        self.max_iter = max_iter
+        self.obstacle_list = obstacle_list
+        self.connect_circle_dist = connect_circle_dist
+        self.step_size = step_size
+        self.robot_radius = robot_radius
+        self.curvature = curvature
+        self.goal_yaw_th = np.deg2rad(60)
+        self.goal_xy_th = 0.5
+        self.play_area = None
+        self.turning_cost_weight = turning_cost_weight
+        self.node_list = []
+
+    # -- Pure-Pursuit arc geometry -----------------------------------
+
+    def _pure_pursuit_arc(self, x1, y1, phi1, x2, y2):
+        """Return (kappa, s, x_new, y_new, phi_new) or None."""
+        dx = x2 - x1
+        dy = y2 - y1
+        L = math.hypot(dx, dy)
+        if L < 1e-9:
+            return None
+        beta = math.atan2(dy, dx)
+        alpha = angle_mod(beta - phi1)
+
+        if abs(math.sin(alpha)) < 1e-12:
+            s = L
+            return 0.0, s, x1 + s * math.cos(phi1), y1 + s * math.sin(phi1), phi1
+
+        kappa_req = 2.0 * math.sin(alpha) / L
+        kappa = max(-self.curvature, min(self.curvature, kappa_req))
+        theta = 2.0 * alpha
+
+        if abs(kappa_req) > self.curvature:
+            step_max = self.step_size * 10
+            s = min(L, step_max)
+            theta = kappa * s
+        else:
+            s = abs(theta) / max(abs(kappa), 1e-12)
+
+        new_x = x1 + (math.sin(phi1 + theta) - math.sin(phi1)) / kappa if abs(kappa) > 1e-12 else x1 + s * math.cos(phi1)
+        new_y = y1 + (-math.cos(phi1 + theta) + math.cos(phi1)) / kappa if abs(kappa) > 1e-12 else y1 + s * math.sin(phi1)
+        new_phi = phi1 + theta
+        return kappa, s, new_x, new_y, angle_mod(new_phi)
+
+    def _gen_arc_path(self, x1, y1, phi1, kappa, s):
+        """Generate interpolated points along a circular arc."""
+        steps = max(2, int(abs(s) / self.step_size) + 1)
+        px, py, pyaw = [], [], []
+        for i in range(steps + 1):
+            t = s * i / steps
+            if abs(kappa) > 1e-12:
+                px.append(x1 + (math.sin(phi1 + kappa * t) - math.sin(phi1)) / kappa)
+                py.append(y1 + (-math.cos(phi1 + kappa * t) + math.cos(phi1)) / kappa)
+                pyaw.append(phi1 + kappa * t)
+            else:
+                px.append(x1 + t * math.cos(phi1))
+                py.append(y1 + t * math.sin(phi1))
+                pyaw.append(phi1)
+        return px, py, pyaw
+
+    def _turning_cost(self, kappa, s):
+        """Cost of an arc segment: length + penalty for sharp turns."""
+        base = abs(s)
+        if self.turning_cost_weight > 0 and abs(kappa) > 1e-12:
+            penalty = self.turning_cost_weight * (kappa / self.curvature) ** 2 * base
+            return base + penalty
+        return base
+
+    # -- Steering ----------------------------------------------------
+
+    def get_random_node(self):
+        if random.randint(0, 100) > self.goal_sample_rate:
+            x = random.uniform(self.min_rand_x, self.max_rand_x)
+            y = random.uniform(self.min_rand_y, self.max_rand_y)
+        else:
+            x, y = self.end.x, self.end.y
+        return self.Node(x, y, 0.0)  # heading is placeholder
+
+    def steer(self, from_node, to_node):
+        """Pure-Pursuit steering: arc from *from_node* toward
+        *to_node* position.  Returns new_node or None."""
+        res = self._pure_pursuit_arc(
+            from_node.x, from_node.y, from_node.yaw,
+            to_node.x, to_node.y)
+        if res is None:
+            return None
+        kappa, s, nx, ny, nphi = res
+        if s < 1e-9:
+            return None
+        new_node = copy.deepcopy(from_node)
+        new_node.x = nx
+        new_node.y = ny
+        new_node.yaw = nphi
+        new_node.path_x, new_node.path_y, new_node.path_yaw = \
+            self._gen_arc_path(from_node.x, from_node.y, from_node.yaw, kappa, s)
+        cost = self._turning_cost(kappa, s)
+        new_node.cost += cost
+        new_node.parent = from_node
+        return new_node
+
+    def check_collision(self, node, obstacle_list, robot_radius):
+        if node is None:
+            return False
+        if node.path_x is None:
+            return True
+        for ox, oy, size in obstacle_list:
+            for x, y in zip(node.path_x, node.path_y):
+                d = math.hypot(x - ox, y - oy)
+                if d <= size + robot_radius:
+                    return False
+        return True
+
+    # -- RRT* operations (override cost to use turning cost) ---------
+
+    def calc_new_cost(self, from_node, to_node):
+        res = self._pure_pursuit_arc(
+            from_node.x, from_node.y, from_node.yaw,
+            to_node.x, to_node.y)
+        if res is None:
+            return float('inf')
+        kappa, s, _, _, _ = res
+        return from_node.cost + self._turning_cost(kappa, s)
+
+    def calc_new_cost_dubins(self, from_node, to_node):
+        try:
+            _, _, _, _, course_lengths = plan_dubins_path(
+                from_node.x, from_node.y, from_node.yaw,
+                to_node.x, to_node.y, to_node.yaw,
+                self.curvature, step_size=self.step_size)
+            cost = sum(abs(c) for c in course_lengths)
+            if self.turning_cost_weight > 0:
+                k_avg = sum(abs(c) for c in course_lengths[::2]) / max(sum(abs(c) for c in course_lengths), 1e-12)
+                penalty = self.turning_cost_weight * (k_avg * self.curvature) ** 2 * cost
+                cost += penalty
+            return from_node.cost + cost
+        except Exception:
+            return float('inf')
+
+    def choose_parent(self, new_node, near_indexes):
+        if not near_indexes:
+            return None
+        best_cost = float('inf')
+        best_parent_index = -1
+        for i in near_indexes:
+            near_node = self.node_list[i]
+            t_node = self.steer(near_node, new_node)
+            if t_node and self.check_collision(t_node, self.obstacle_list, self.robot_radius):
+                cost = self.calc_new_cost(near_node, new_node)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_parent_index = i
+        if best_parent_index == -1:
+            return None
+        new_node = self.steer(self.node_list[best_parent_index], new_node)
+        new_node.cost = best_cost
+        return new_node
+
+    def rewire(self, new_node, near_indexes):
+        for i in near_indexes:
+            near_node = self.node_list[i]
+            t_node = self.steer(new_node, near_node)
+            if t_node and self.check_collision(t_node, self.obstacle_list, self.robot_radius):
+                cost = self.calc_new_cost(new_node, near_node)
+                if cost < near_node.cost:
+                    near_node.parent = new_node
+                    near_node.path_x = t_node.path_x
+                    near_node.path_y = t_node.path_y
+                    near_node.path_yaw = t_node.path_yaw
+                    near_node.cost = cost
+
+    # -- Dubins-based rewire (used after tree is built for better
+    #    connections) ------------------------------------------------
+
+    def rewire_dubins(self, new_node, near_indexes):
+        for i in near_indexes:
+            near_node = self.node_list[i]
+            t_node = self.steer_dubins(new_node, near_node)
+            if t_node and self.check_collision(t_node, self.obstacle_list, self.robot_radius):
+                cost = self.calc_new_cost_dubins(new_node, near_node)
+                if cost < near_node.cost:
+                    near_node.parent = new_node
+                    near_node.path_x = t_node.path_x
+                    near_node.path_y = t_node.path_y
+                    near_node.path_yaw = t_node.path_yaw
+                    near_node.course_lengths = t_node.course_lengths
+                    near_node.mode = t_node.mode
+                    near_node.cost = cost
+
+    def steer_dubins(self, from_node, to_node):
+        px, py, pyaw, mode, course_lengths = plan_dubins_path(
+            from_node.x, from_node.y, from_node.yaw,
+            to_node.x, to_node.y, to_node.yaw,
+            self.curvature, step_size=self.step_size)
+        if len(px) <= 1:
+            return None
+        new_node = copy.deepcopy(from_node)
+        new_node.x = px[-1]
+        new_node.y = py[-1]
+        new_node.yaw = pyaw[-1]
+        new_node.path_x = px
+        new_node.path_y = py
+        new_node.path_yaw = pyaw
+        new_node.mode = mode
+        new_node.course_lengths = course_lengths
+        cost = sum(abs(c) for c in course_lengths)
+        new_node.cost += cost
+        new_node.parent = from_node
+        return new_node
+
+    def choose_parent_dubins(self, new_node, near_indexes):
+        if not near_indexes:
+            return None
+        best_cost = float('inf')
+        best_parent_index = -1
+        for i in near_indexes:
+            near_node = self.node_list[i]
+            t_node = self.steer_dubins(near_node, new_node)
+            if t_node and self.check_collision(t_node, self.obstacle_list, self.robot_radius):
+                cost = self.calc_new_cost_dubins(near_node, new_node)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_parent_index = i
+        if best_parent_index == -1:
+            return None
+        new_node = self.steer_dubins(self.node_list[best_parent_index], new_node)
+        new_node.cost = best_cost
+        return new_node
+
+    # -- Goal connection & final path --------------------------------
+
+    def _dubins_connection_to_goal(self, node):
+        d = math.hypot(node.x - self.end.x, node.y - self.end.y)
+        yaw_diff = abs(angle_mod(node.yaw - self.end.yaw))
+        if d < 1e-4 and yaw_diff < 1e-3:
+            return True, 0.0
+        px, py, _, _, course_lengths = plan_dubins_path(
+            node.x, node.y, node.yaw,
+            self.end.x, self.end.y, self.end.yaw,
+            self.curvature, step_size=self.step_size)
+        if len(px) <= 1:
+            return False, None
+        for ox, oy, size in self.obstacle_list:
+            for x, y in zip(px, py):
+                if math.hypot(x - ox, y - oy) <= size + self.robot_radius:
+                    return False, None
+        dubins_cost = sum(abs(c) for c in course_lengths)
+        return True, dubins_cost
+
+    def search_best_goal_node(self):
+        candidates = []
+        for (i, node) in enumerate(self.node_list):
+            d = math.hypot(node.x - self.end.x, node.y - self.end.y)
+            yaw_diff = abs(angle_mod(node.yaw - self.end.yaw))
+            if d > self.goal_xy_th:
+                continue
+            if yaw_diff > self.goal_yaw_th:
+                continue
+            is_valid, cost = self._dubins_connection_to_goal(node)
+            if not is_valid:
+                continue
+            candidates.append((i, node.cost, cost))
+        if not candidates:
+            return None
+        best_idx = min(candidates, key=lambda c: c[1] + c[2])[0]
+        return best_idx
+
+    def generate_final_course(self, goal_index):
+        node = self.node_list[goal_index]
+        node_path = []
+        n = node
+        while n.parent is not None:
+            node_path.append(n)
+            n = n.parent
+        node_path.append(n)
+        node_path.reverse()
+
+        path = [[node_path[0].x, node_path[0].y]]
+        for n in node_path[1:]:
+            if len(n.path_x) > 0:
+                path.extend([x, y] for x, y in zip(n.path_x[1:], n.path_y[1:]))
+            else:
+                path.append([n.x, n.y])
+
+        d_g = math.hypot(node.x - self.end.x, node.y - self.end.y)
+        yaw_g = abs(angle_mod(node.yaw - self.end.yaw))
+        if d_g >= 1e-4 or yaw_g >= 1e-3:
+            px, py, _, _, _ = plan_dubins_path(
+                node.x, node.y, node.yaw,
+                self.end.x, self.end.y, self.end.yaw,
+                self.curvature, step_size=self.step_size)
+            if len(px) > 1:
+                path.extend([x, y] for x, y in zip(px[1:], py[1:]))
+            else:
+                path.append([self.end.x, self.end.y])
+        else:
+            path.append([self.end.x, self.end.y])
+        return path
+
+    # -- Main planning loop ------------------------------------------
+
+    def planning(self, animation=True, search_until_max_iter=True):
+        self.node_list = [self.start]
+        for i in range(self.max_iter):
+            rnd = self.get_random_node()
+            nearest_ind = self.get_nearest_node_index(self.node_list, rnd)
+            nearest_node = self.node_list[nearest_ind]
+
+            new_node = self.steer(nearest_node, rnd)
+
+            if new_node and self.check_collision(new_node, self.obstacle_list, self.robot_radius):
+                near_indexes = self.find_near_nodes(new_node)
+                new_node = self.choose_parent(new_node, near_indexes)
+                if new_node:
+                    self.node_list.append(new_node)
+                    self.rewire(new_node, near_indexes)
+
+            if (not search_until_max_iter) and new_node:
+                last_index = self.search_best_goal_node()
+                if last_index:
+                    return self.generate_final_course(last_index)
+
+        # Dubins-based rewire pass for smoother connections
+        for i in range(min(100, len(self.node_list))):
+            new_node = self.node_list[i]
+            near_indexes = self.find_near_nodes(new_node)
+            self.rewire_dubins(new_node, near_indexes)
+
+        last_index = self.search_best_goal_node()
+        if last_index:
+            return self.generate_final_course(last_index)
+        return None
+
+    def get_curvature_analytical(self):
+        path = self.generate_final_course(self.search_best_goal_node())
+        if path is None or len(path) < 3:
+            raise ValueError
+        arr = np.asarray(path)
+        dx = np.gradient(arr[:, 0])
+        dy = np.gradient(arr[:, 1])
+        ddx = np.gradient(dx)
+        ddy = np.gradient(dy)
+        k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+        return k, np.cumsum(np.hypot(dx, dy))
+
+
+# ═══════════════════════════════════════════════════════════════
 # 7. RRT PLANNER WRAPPER
 # ═══════════════════════════════════════════════════════════════
 
@@ -1160,7 +1545,8 @@ class RRTPlanner:
         )
 
         if self.planner_type in ('rrt_star_dubins', 'bit_star_dubins',
-                                  'bit_star_theta', 'modified_dubins_rrt_star'):
+                                  'bit_star_theta', 'modified_dubins_rrt_star',
+                                  'rrt_star_asv'):
             extra = dict(max_iter=1000, connect_circle_dist=4.5)
             if self.planner_type == 'rrt_star_dubins':
                 pass
@@ -1168,10 +1554,12 @@ class RRTPlanner:
                 extra['batch_size'] = 200
             elif self.planner_type == 'bit_star_theta':
                 extra['batch_size'] = 200
+            elif self.planner_type == 'rrt_star_asv':
+                extra['turning_cost_weight'] = p.get('turning_cost_weight', 0.5)
             else:
                 pass  # modified_dubins_rrt_star: no batch params needed
             if self.planner_type in ('rrt_star_dubins', 'bit_star_dubins',
-                                      'modified_dubins_rrt_star'):
+                                      'modified_dubins_rrt_star', 'rrt_star_asv'):
                 extra['kappa_max'] = c.kappa_max
             base.update(extra)
 
@@ -1219,6 +1607,26 @@ class RRTPlanner:
                 step_size=path_resolution,
                 curvature=p['kappa_max'],
                 eta1=p.get('eta1', 0.3),
+            )
+            self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
+            self.planner.goal_yaw_th = p.get('goal_yaw_th', np.deg2rad(60))
+        elif self.planner_type == 'rrt_star_asv':
+            start = [float(c.start[0]), float(c.start[1]), float(c.th_start)]
+            goal = [float(c.goal[0]), float(c.goal[1]), float(c.th_goal)]
+            path_resolution = p.get('path_resolution', 0.05)
+            self.planner = RRTStarASV(
+                start=start, goal=goal,
+                obstacle_list=obstacle_list,
+                rand_area=[c.xmin, c.xmax],
+                rand_area_x=[c.xmin, c.xmax],
+                rand_area_y=[c.ymin, c.ymax],
+                goal_sample_rate=p['goal_sample_rate'],
+                max_iter=p['max_iter'],
+                connect_circle_dist=p['connect_circle_dist'],
+                robot_radius=p['robot_radius'],
+                step_size=path_resolution,
+                curvature=p['kappa_max'],
+                turning_cost_weight=p.get('turning_cost_weight', 0.5),
             )
             self.planner.goal_xy_th = p.get('goal_xy_th', 0.2)
             self.planner.goal_yaw_th = p.get('goal_yaw_th', np.deg2rad(60))

@@ -6,7 +6,7 @@ import pandas as pd
 from joblib import Parallel, delayed
 
 from scenario_config import ScenarioConfig
-from rrt_based.rrt_planner_modified import RRTPlanner, angle_mod, ModifiedDubinsRRTStar
+from rrt_based.rrt_planner_modified import RRTPlanner, angle_mod, ModifiedDubinsRRTStar, RRTStarASV
 from rrt_based.ccpoa import CCPOA
 from de2d_nurbs import DE2D_NURBS
 try:
@@ -247,6 +247,49 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
+def run_rrt_star_asv(config, seed=None, turning_cost_weight=0.5):
+    if seed is not None:
+        config.seed = seed
+    config.setup()
+
+    start = [float(config.start[0]), float(config.start[1]), float(config.th_start)]
+    goal = [float(config.goal[0]), float(config.goal[1]), float(config.th_goal)]
+    obstacle_list = list(config.obs)
+
+    t0 = time.perf_counter()
+    planner = RRTStarASV(
+        start=start, goal=goal,
+        obstacle_list=obstacle_list,
+        rand_area=[config.xmin, config.xmax],
+        rand_area_x=[config.xmin, config.xmax],
+        rand_area_y=[config.ymin, config.ymax],
+        goal_sample_rate=20, max_iter=500,
+        connect_circle_dist=4.5,
+        robot_radius=config.radius,
+        step_size=0.05,
+        curvature=config.kappa_max,
+        turning_cost_weight=turning_cost_weight)
+    raw = planner.planning(animation=False, search_until_max_iter=True)
+    elapsed = time.perf_counter() - t0
+
+    if raw is None:
+        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
+                    length=np.nan, max_kappa=np.nan, collision_free=False)
+
+    raw_arr = np.asarray(raw)
+    length = path_length(raw_arr)
+    col_free = is_collision_free(raw_arr, config.obs, config.radius)
+
+    try:
+        k_anal, _ = planner.get_curvature_analytical()
+        max_k = float(k_anal.max())
+    except Exception:
+        max_k = max_curvature_numerical(raw_arr)
+
+    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed, success=True,
+                length=length, max_kappa=max_k, collision_free=col_free)
+
+
 def smooth_path_rrt(planner, raw_path, n_waypoints=20, s=0.015):
     if raw_path is None or len(raw_path) < 4:
         return None
@@ -448,8 +491,9 @@ PLANNERS = [
     # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
     ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
     ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+    ('rrt_star_asv',      run_rrt_star_asv),
     ('bit_star_dubins',   run_bit_star_dubins),
-    # ('de2d_nurbs',        run_de2d_nurbs),
+    ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
