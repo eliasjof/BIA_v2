@@ -45,12 +45,12 @@ def run(com_obstaculo=False, max_iter=2500, seed=None, plot=False):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        cost_a=1.0, cost_b=1.5, max_nodes=500,
+        cost_a=1.0, cost_b=1.5, max_nodes=None,
     )
 
     # ── plan ────────────────────────────────────────────────
     t0 = time.perf_counter()
-    raw = planner.planning(animation=False, search_until_max_iter=True)
+    raw = planner.planning(animation=True, search_until_max_iter=True)
     elapsed = time.perf_counter() - t0
 
     if raw is None:
@@ -158,8 +158,8 @@ if __name__ == "__main__":
     # print(">>> Teste 1: ambiente livre, 500 iterações")
     # run(com_obstaculo=False, max_iter=500, seed=42, plot=True)
 
-    print(">>> Teste 2: com obstáculo, 2500 iterações")
-    run(com_obstaculo=True, max_iter=2500, seed=42, plot=True)
+    print(">>> Teste 2: com obstáculo, 1000 iterações")
+    run(com_obstaculo=True, max_iter=1000, seed=42, plot=True)
 
     # print(">>> Teste 3: ambiente livre, 1000 iterações")
     # run(com_obstaculo=False, max_iter=1000, seed=7, plot=True)

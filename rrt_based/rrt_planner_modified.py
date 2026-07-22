@@ -1177,7 +1177,7 @@ class RRTStarASV(RRTStar):
         self.robot_radius = robot_radius
         self.curvature = curvature
         self.goal_yaw_th = np.deg2rad(60)
-        self.goal_xy_th = 0.2
+        self.goal_xy_th = 2.5
         self.play_area = None
         self.cost_a = cost_a
         self.cost_b = cost_b
@@ -1249,9 +1249,11 @@ class RRTStarASV(RRTStar):
         if random.randint(0, 100) > self.goal_sample_rate:
             x = random.uniform(self.min_rand_x, self.max_rand_x)
             y = random.uniform(self.min_rand_y, self.max_rand_y)
+            yaw = math.atan2(self.end.y - y, self.end.x - x)
         else:
             x, y = self.end.x, self.end.y
-        return self.Node(x, y, 0.0)  # heading is placeholder
+            yaw = self.end.yaw
+        return self.Node(x, y, yaw)
 
     def steer(self, from_node, to_node):
         """Pure-Pursuit steering: arc from *from_node* toward
@@ -1314,7 +1316,7 @@ class RRTStarASV(RRTStar):
 
     def choose_parent(self, new_node, near_indexes):
         if not near_indexes:
-            return None, -1
+            return None
         best_cost = float('inf')
         best_parent_index = -1
         for i in near_indexes:
@@ -1326,11 +1328,11 @@ class RRTStarASV(RRTStar):
                     best_cost = cost
                     best_parent_index = i
         if best_parent_index == -1:
-            return None, -1
+            return None
         new_node = self.steer(self.node_list[best_parent_index], new_node)
         new_node.cost = best_cost
         new_node.parent = self.node_list[best_parent_index]
-        return new_node, best_parent_index
+        return new_node
 
     def rewire(self, new_node, near_indexes):
         """PP-based rewire (não usado no loop principal — artigo diz que PP não funciona para rewire)."""
@@ -1404,11 +1406,11 @@ class RRTStarASV(RRTStar):
                     best_cost = cost
                     best_parent_index = i
         if best_parent_index == -1:
-            return None, -1
+            return None
         new_node = self.steer_dubins(self.node_list[best_parent_index], new_node)
         new_node.cost = best_cost
         new_node.parent = self.node_list[best_parent_index]
-        return new_node, best_parent_index
+        return new_node
 
     # -- Goal connection & final path --------------------------------
 
@@ -1591,6 +1593,18 @@ class RRTStarASV(RRTStar):
                     return self.generate_final_course(goal_index)
         return path
 
+    def _random_remove_leaf(self):
+        """Remove um nó folha (sem filhos) aleatório, preservando a conectividade."""
+        if len(self.node_list) <= 1:
+            return
+        parents = {id(n.parent) for n in self.node_list if n.parent is not None}
+        leaves = [n for n in self.node_list
+                  if n is not self.start and id(n) not in parents]
+        if not leaves:
+            return
+        victim = random.choice(leaves)
+        self.node_list.remove(victim)
+
     def planning(self, animation=True, search_until_max_iter=True):
         self.node_list = [self.start]
         for i in range(self.max_iter):
@@ -1600,18 +1614,22 @@ class RRTStarASV(RRTStar):
             new_node = self.steer(nearest_node, rnd)
             if new_node and self.check_collision(new_node, self.obstacle_list, self.robot_radius):
                 near_indexes = self.find_near_nodes(new_node)
-                new_node, parent_idx = self.choose_parent(new_node, near_indexes)
+                # Use PP-based choose_parent for tree growth,
+                # then Dubins-based rewire for optimal connections
+                new_node = self.choose_parent(new_node, near_indexes)
                 if new_node:
                     self.node_list.append(new_node)
+                    # Find parent index for exclusion during rewire
+                    parent_idx = self.node_list.index(new_node.parent) if new_node.parent else -1
                     self.rewire_dubins(new_node, near_indexes, exclude_parent=parent_idx)
             if not search_until_max_iter and new_node:
                 last_index = self.search_best_goal_node()
                 if last_index:
                     return self._build_final_path(last_index)
-            # M-limit (Alg. 1): remove random node if tree exceeds max_nodes
-            if self.max_nodes > 0 and len(self.node_list) > self.max_nodes:
-                rem = random.randint(0, len(self.node_list) - 1)
-                self.node_list.pop(rem)
+            # Leaf-only pruning: remove only leaf nodes (no children)
+            # to preserve useful connections near obstacles
+            if self.max_nodes is not None and len(self.node_list) > self.max_nodes:
+                self._random_remove_leaf()
 
         last_index = self.search_best_goal_node()
         if last_index:
