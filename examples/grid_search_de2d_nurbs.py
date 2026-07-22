@@ -125,6 +125,7 @@ def plot_results(agg):
 def _run_single(params, run, n_generations, run_configs, idx):
     scen = run_configs[run]
     config = ScenarioConfig()
+    config.obstacle_type = "circles"
     config.seed = scen["seed"]
     config.occupancy_rate = scen["occupancy"]
     config.start = np.array([-1.4, -0.8])
@@ -146,6 +147,8 @@ def _run_single(params, run, n_generations, run_configs, idx):
     config.alpha_kappa = params["alpha_kappa"]
     config.alpha_obs = params["alpha_obs"]
     config.alpha_workspace = params["alpha_workspace"]
+    config.draw_scenario()
+    
 
     de = DE2D_NURBS(config)
     de.run()
@@ -179,6 +182,12 @@ def main():
         "alpha_obs": [1.0, 10.0, 100.0, 500.0],
         "alpha_workspace": [0.1, 1.0, 10.0],
     }
+    param_grid = {
+        "pop_size": [50],
+        "alpha_kappa": [0.1],
+        "alpha_obs": [1.0],
+        "alpha_workspace": [0.1],
+    }
     N_RUNS = 10
     N_GENERATIONS = 200
     N_JOBS = 20
@@ -187,7 +196,7 @@ def main():
     # Cada run usa seed e ocupação diferentes — TODAS as combinações
     # enfrentam o MESMO conjunto de cenários, permitindo comparação justa.
     run_configs = [
-        {"seed": BASE_SEED + r, "occupancy": round(0.05 * (r + 1), 2)}
+        {"seed": BASE_SEED + r, "occupancy": round(0.02 * (r + 1), 2)}
         for r in range(N_RUNS)
     ]
 

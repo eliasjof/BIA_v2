@@ -45,7 +45,7 @@ def run(com_obstaculo=False, max_iter=2500, seed=None, plot=False):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        cost_a=1.0, cost_b=1.5, max_nodes=None,
+        cost_a=1.2, cost_b=1.5, max_nodes=None,
     )
 
     # ── plan ────────────────────────────────────────────────
@@ -158,8 +158,8 @@ if __name__ == "__main__":
     # print(">>> Teste 1: ambiente livre, 500 iterações")
     # run(com_obstaculo=False, max_iter=500, seed=42, plot=True)
 
-    print(">>> Teste 2: com obstáculo, 1000 iterações")
-    run(com_obstaculo=True, max_iter=1000, seed=42, plot=True)
+    print(">>> Teste 2: com obstáculo, 5000 iterações")
+    run(com_obstaculo=True, max_iter=5000, seed=42, plot=True)
 
     # print(">>> Teste 3: ambiente livre, 1000 iterações")
     # run(com_obstaculo=False, max_iter=1000, seed=7, plot=True)

@@ -259,7 +259,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_rrt_star_asv(config, seed=None, cost_a=1.0, cost_b=1.5):
+def run_rrt_star_asv(config, seed=None, cost_a=1.20, cost_b=1.5):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -275,12 +275,12 @@ def run_rrt_star_asv(config, seed=None, cost_a=1.0, cost_b=1.5):
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=2000,
+        goal_sample_rate=30, max_iter=5000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        cost_a=cost_a, cost_b=cost_b, max_nodes=500)
+        cost_a=cost_a, cost_b=cost_b, max_nodes=None)
     raw = planner.planning(animation=False, search_until_max_iter=True)
     elapsed = time.perf_counter() - t0
 
@@ -496,11 +496,11 @@ PLANNERS = [
     # ('rrt_star_smooth',   run_rrt_star_smooth),
     # ('rrt_star_dubins',   run_rrt_star_dubins),
     # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
-    ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
-    ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+    # ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
+    # ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
     ('rrt_star_asv',      run_rrt_star_asv),
     ('bit_star_dubins',   run_bit_star_dubins),
-    ('de2d_nurbs',        run_de2d_nurbs),
+    # ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
@@ -707,7 +707,7 @@ def scenarios_progressive(seeds, max_obs=10, pool_seed=42, center_size=0.35,
     pool = generate_obstacle_pool(max_obs, pool_seed, center_size)
     sc = []
     for s in seeds:
-        for k in range(0, max_obs + 1):
+        for k in range(1, max_obs + 1):
             sc.append(dict(seed=s, obs_list=pool[:k],
                            label=f'{label_prefix}{k:02d}_seed{s}'))
     return sc
@@ -876,19 +876,19 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(1)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(5)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles
-        ('no_obs', scenarios_no_obstacles(seeds)),
+        # ('no_obs', scenarios_no_obstacles(seeds)),
 
         # # 2) Fixed chicane (7 obstacles)
         # ('chicane', scenarios_fixed_obstacles(
         #     seeds, generate_chicane_obstacles(), 'chicane')),
 
         # 3) 1 → 5 obstacles from a progressive pool
-        # ('progressive', scenarios_progressive(
-            # seeds, max_obs=9, pool_seed=22, center_size=0.3)),
+        ('progressive', scenarios_progressive(
+            seeds, max_obs=3, pool_seed=22, center_size=0.3)),
     ]
 
     # ── Uncomment any line below to add more experiments ──

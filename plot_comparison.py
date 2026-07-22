@@ -20,6 +20,7 @@ PLANNER_STYLE = {
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color='#4CAF50', ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
+    'rrt_star_asv':      dict(color='#FFEB3B', ls='-',  lw=2.0, label='RRT* ASV'),
 }
 
 
@@ -85,6 +86,16 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     ax.plot(goal[0], goal[1], '*', color='#C62828',
             markersize=14, zorder=5, label='Goal')
 
+
+    # setas de heading
+    dx_s = 0.15 * np.cos(ws.th_start)
+    dy_s = 0.15 * np.sin(ws.th_start)
+    ax.arrow(ws.start[0], ws.start[1], dx_s, dy_s,
+                head_width=0.05, head_length=0.05, color='#2E7D32')
+    dx_g = 0.15 * np.cos(ws.th_goal)
+    dy_g = 0.15 * np.sin(ws.th_goal)
+    ax.arrow(ws.goal[0], ws.goal[1], dx_g, dy_g,
+                head_width=0.05, head_length=0.05, color='#C62828')
     legend_lines = []
     legend_labels = []
 
@@ -131,6 +142,10 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     ax.legend(legend_lines, legend_labels, fontsize=7, loc='upper left',
               framealpha=0.9, edgecolor='gray')
     # ax.set_title(f'Scenario: {scenario_label}', fontsize=13, fontweight='bold')
+    
+    
+    
+    
     ax.axis([-2,2, -2,2])
     fig.tight_layout()
     out_path = save_dir / f'{scenario_label}.png'
