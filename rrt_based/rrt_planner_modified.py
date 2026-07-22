@@ -1468,7 +1468,103 @@ class RRTStarASV(RRTStar):
             path.append([self.end.x, self.end.y])
         return path
 
+    def shortcut_node_path(self, node_path):
+        """Post-process: shortcut node sequence via Dubins connections."""
+        if len(node_path) < 3:
+            return node_path
+        seq = [node_path[0]]
+        i = 0
+        while i < len(node_path) - 1:
+            best_j = i + 1
+            for j in range(len(node_path) - 1, i, -1):
+                ni = node_path[i]
+                nj = node_path[j]
+                try:
+                    px, py, _, _, _ = plan_dubins_path(
+                        ni.x, ni.y, ni.yaw,
+                        nj.x, nj.y, nj.yaw,
+                        self.curvature, step_size=self.step_size)
+                    if len(px) <= 1:
+                        continue
+                    ok = True
+                    for ox, oy, size in self.obstacle_list:
+                        for x, y in zip(px, py):
+                            if math.hypot(x - ox, y - oy) <= size + self.robot_radius:
+                                ok = False
+                                break
+                        if not ok:
+                            break
+                    if ok:
+                        best_j = j
+                        break
+                except Exception:
+                    continue
+            seq.append(node_path[best_j])
+            i = best_j
+        return seq
+
     # -- Main planning loop ------------------------------------------
+
+    def _build_final_path(self, goal_index):
+        # Try direct start-to-goal Dubins first (optimal in free space)
+        try:
+            px, py, _, _, _ = plan_dubins_path(
+                self.start.x, self.start.y, self.start.yaw,
+                self.end.x, self.end.y, self.end.yaw,
+                self.curvature, step_size=self.step_size)
+            if len(px) > 1:
+                ok = True
+                for ox, oy, size in self.obstacle_list:
+                    for x, y in zip(px, py):
+                        if math.hypot(x - ox, y - oy) <= size + self.robot_radius:
+                            ok = False
+                            break
+                    if not ok:
+                        break
+                if ok:
+                    return [[x, y] for x, y in zip(px, py)]
+        except Exception:
+            pass
+
+        node = self.node_list[goal_index]
+        node_path = []
+        n = node
+        while n.parent is not None:
+            node_path.append(n)
+            n = n.parent
+        node_path.append(n)
+        node_path.reverse()
+        seq = self.shortcut_node_path(node_path)
+        path = [[seq[0].x, seq[0].y]]
+        for i in range(len(seq) - 1):
+            ni = seq[i]
+            nj = seq[i + 1]
+            try:
+                px, py, _, _, _ = plan_dubins_path(
+                    ni.x, ni.y, ni.yaw,
+                    nj.x, nj.y, nj.yaw,
+                    self.curvature, step_size=self.step_size)
+                if len(px) > 1:
+                    path.extend([x, y] for x, y in zip(px[1:], py[1:]))
+                else:
+                    path.append([nj.x, nj.y])
+            except Exception:
+                path.append([nj.x, nj.y])
+        last = seq[-1]
+        d_g = math.hypot(last.x - self.end.x, last.y - self.end.y)
+        yaw_g = abs(angle_mod(last.yaw - self.end.yaw))
+        if d_g >= 1e-4 or yaw_g >= 1e-3:
+            px, py, _, _, _ = plan_dubins_path(
+                last.x, last.y, last.yaw,
+                self.end.x, self.end.y, self.end.yaw,
+                self.curvature, step_size=self.step_size)
+            if len(px) > 1:
+                path.extend([x, y] for x, y in zip(px[1:], py[1:]))
+            else:
+                path.append([self.end.x, self.end.y])
+        else:
+            path.append([self.end.x, self.end.y])
+        return path
 
     def planning(self, animation=True, search_until_max_iter=True):
         self.node_list = [self.start]
@@ -1476,20 +1572,17 @@ class RRTStarASV(RRTStar):
             rnd = self.get_random_node()
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd)
             nearest_node = self.node_list[nearest_ind]
-
             new_node = self.steer(nearest_node, rnd)
-
             if new_node and self.check_collision(new_node, self.obstacle_list, self.robot_radius):
                 near_indexes = self.find_near_nodes(new_node)
                 new_node = self.choose_parent(new_node, near_indexes)
                 if new_node:
                     self.node_list.append(new_node)
                     self.rewire(new_node, near_indexes)
-
             if (not search_until_max_iter) and new_node:
                 last_index = self.search_best_goal_node()
                 if last_index:
-                    return self.generate_final_course(last_index)
+                    return self._build_final_path(last_index)
 
         # Dubins-based rewire pass for smoother connections
         for i in range(min(100, len(self.node_list))):
@@ -1499,7 +1592,7 @@ class RRTStarASV(RRTStar):
 
         last_index = self.search_best_goal_node()
         if last_index:
-            return self.generate_final_course(last_index)
+            return self._build_final_path(last_index)
         return None
 
     def get_curvature_analytical(self):
