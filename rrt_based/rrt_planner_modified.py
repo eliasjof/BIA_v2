@@ -1526,6 +1526,7 @@ class RRTStarASV(RRTStar):
         except Exception:
             pass
 
+        # Build path from shortcutted node sequence + Dubins connection to goal
         node = self.node_list[goal_index]
         node_path = []
         n = node
@@ -1554,16 +1555,25 @@ class RRTStarASV(RRTStar):
         d_g = math.hypot(last.x - self.end.x, last.y - self.end.y)
         yaw_g = abs(angle_mod(last.yaw - self.end.yaw))
         if d_g >= 1e-4 or yaw_g >= 1e-3:
-            px, py, _, _, _ = plan_dubins_path(
-                last.x, last.y, last.yaw,
-                self.end.x, self.end.y, self.end.yaw,
-                self.curvature, step_size=self.step_size)
-            if len(px) > 1:
-                path.extend([x, y] for x, y in zip(px[1:], py[1:]))
-            else:
+            try:
+                px, py, _, _, _ = plan_dubins_path(
+                    last.x, last.y, last.yaw,
+                    self.end.x, self.end.y, self.end.yaw,
+                    self.curvature, step_size=self.step_size)
+                if len(px) > 1:
+                    path.extend([x, y] for x, y in zip(px[1:], py[1:]))
+                else:
+                    path.append([self.end.x, self.end.y])
+            except Exception:
                 path.append([self.end.x, self.end.y])
         else:
             path.append([self.end.x, self.end.y])
+
+        # Validate: if path collides, fall back to arc-concatenated path
+        for ox, oy, size in self.obstacle_list:
+            for x, y in path:
+                if math.hypot(x - ox, y - oy) <= size + self.robot_radius:
+                    return self.generate_final_course(goal_index)
         return path
 
     def planning(self, animation=True, search_until_max_iter=True):

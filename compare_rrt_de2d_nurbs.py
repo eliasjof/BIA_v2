@@ -31,11 +31,23 @@ def max_curvature_numerical(path):
     if path is None or len(path) < 4:
         return np.nan
     a = np.asarray(path)
-    dx = np.gradient(a[:, 0])
-    dy = np.gradient(a[:, 1])
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
-    k = np.abs(dx * ddy - dy * ddx) / ((dx**2 + dy**2)**1.5 + 1e-8)
+    # Menger curvature: curvature of circumcircle through (i-1, i, i+1)
+    # vectorized: area of triangle (i-1, i, i+1) gives curvature via 4*area/(a*b*c)
+    p0 = a[:-2]  # i-1
+    p1 = a[1:-1]  # i
+    p2 = a[2:]   # i+1
+    ax = p1[:, 0] - p0[:, 0]
+    ay = p1[:, 1] - p0[:, 1]
+    bx = p2[:, 0] - p1[:, 0]
+    by = p2[:, 1] - p1[:, 1]
+    cx = p2[:, 0] - p0[:, 0]
+    cy = p2[:, 1] - p0[:, 1]
+    cross = np.abs(ax * by - bx * ay)
+    a_len = np.hypot(ax, ay)
+    b_len = np.hypot(bx, by)
+    c_len = np.hypot(cx, cy)
+    denom = a_len * b_len * c_len
+    k = np.where(denom > 1e-12, 2.0 * cross / denom, 0.0)
     return float(k.max())
 
 

@@ -1,11 +1,16 @@
-import sys, pathlib, math, time, numpy as np
+import sys, pathlib, math, time, numpy as np, os
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 from scenario_config import ScenarioConfig
 from rrt_based.rrt_planner_modified import RRTStarASV, angle_mod
 
 
-def run(com_obstaculo=False, max_iter=500, seed=None):
+def run(com_obstaculo=False, max_iter=500, seed=None, plot=False):
     # ── cenário ─────────────────────────────────────────────
     config = ScenarioConfig()
     config.radius = 0.073
@@ -105,13 +110,58 @@ def run(com_obstaculo=False, max_iter=500, seed=None):
     print(f"  Últimos  3: {path[-3:].tolist()}")
     print()
 
+    # ── plot ────────────────────────────────────────────────
+    if plot:
+        fig, ax = plt.subplots(figsize=(7, 5))
+        # árvore
+        for n in planner.node_list:
+            if n.parent is not None and hasattr(n, 'path_x') and n.path_x is not None and len(n.path_x) > 1:
+                ax.plot(n.path_x, n.path_y, color="gray", linewidth=0.3, alpha=0.4)
+        # caminho
+        ax.plot(path[:, 0], path[:, 1], "b-", linewidth=2, label="RRT*ASV")
+        # Dubins ótima
+        ax.plot(px, py, "r--", linewidth=1.5, alpha=0.7, label="Dubins ótima")
+        # obstáculos
+        for ox, oy, size in config.obs:
+            circle = plt.Circle((ox, oy), size, color="orange", alpha=0.4, label="_")
+            ax.add_patch(circle)
+            circle2 = plt.Circle((ox, oy), size + config.radius,
+                                 color="orange", fill=False, linestyle=":", linewidth=1)
+            ax.add_patch(circle2)
+        # start / goal
+        ax.plot(config.start[0], config.start[1], "go", markersize=8, label="Start")
+        ax.plot(config.goal[0], config.goal[1], "ro", markersize=8, label="Goal")
+        # setas de heading
+        dx_s = 0.15 * math.cos(config.th_start)
+        dy_s = 0.15 * math.sin(config.th_start)
+        ax.arrow(config.start[0], config.start[1], dx_s, dy_s,
+                 head_width=0.05, head_length=0.05, color="green")
+        dx_g = 0.15 * math.cos(config.th_goal)
+        dy_g = 0.15 * math.sin(config.th_goal)
+        ax.arrow(config.goal[0], config.goal[1], dx_g, dy_g,
+                 head_width=0.05, head_length=0.05, color="red")
+
+        obst_str = "com obstáculo" if com_obstaculo else "sem obstáculo"
+        ax.set_title(f"RRT*ASV — {obst_str}  ({len(planner.node_list)} nós, {comprimento:.2f}m)")
+        ax.set_aspect("equal")
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        fname = f"rrt_star_asv_{'obs' if com_obstaculo else 'free'}_{seed}.png"
+        # fig.savefig(fname, dpi=120)
+        print(f"  Plot salvo: {fname}")
+        # if os.environ.get("DISPLAY") or os.name == "nt":
+            # plt.show(block=False)
+        # plt.close(fig)
+        plt.show()
+
 
 if __name__ == "__main__":
     print(">>> Teste 1: ambiente livre, 500 iterações")
-    run(com_obstaculo=False, max_iter=500, seed=42)
+    run(com_obstaculo=False, max_iter=500, seed=42, plot=True)
 
     print(">>> Teste 2: com obstáculo, 500 iterações")
-    run(com_obstaculo=True, max_iter=500, seed=42)
+    run(com_obstaculo=True, max_iter=500, seed=42, plot=True)
 
     print(">>> Teste 3: ambiente livre, 1000 iterações")
-    run(com_obstaculo=False, max_iter=1000, seed=7)
+    run(com_obstaculo=False, max_iter=1000, seed=7, plot=True)
