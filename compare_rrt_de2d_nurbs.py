@@ -279,12 +279,7 @@ def run_rrt_star_asv(config, seed=None, turning_cost_weight=0.5):
     raw_arr = np.asarray(raw)
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
-
-    try:
-        k_anal, _ = planner.get_curvature_analytical()
-        max_k = float(k_anal.max())
-    except Exception:
-        max_k = max_curvature_numerical(raw_arr)
+    max_k = max_curvature_numerical(raw_arr)
 
     return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed, success=True,
                 length=length, max_kappa=max_k, collision_free=col_free)

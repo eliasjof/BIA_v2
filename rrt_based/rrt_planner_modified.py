@@ -1596,7 +1596,10 @@ class RRTStarASV(RRTStar):
         return None
 
     def get_curvature_analytical(self):
-        path = self.generate_final_course(self.search_best_goal_node())
+        gi = self.search_best_goal_node()
+        if gi is None:
+            raise ValueError
+        path = self._build_final_path(gi)
         if path is None or len(path) < 3:
             raise ValueError
         arr = np.asarray(path)
