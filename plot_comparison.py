@@ -12,11 +12,17 @@ from scenario_config import ScenarioConfig
 
 def _curvature_and_arc(pts):
     a = np.asarray(pts)
-    dx = np.gradient(a[:, 0])
-    dy = np.gradient(a[:, 1])
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
-    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+    # Menger curvature of circumcircle through (i-1, i, i+1)
+    p0 = a[:-2]; p1 = a[1:-1]; p2 = a[2:]
+    ax = p1[:, 0] - p0[:, 0]; ay = p1[:, 1] - p0[:, 1]
+    bx = p2[:, 0] - p1[:, 0]; by = p2[:, 1] - p1[:, 1]
+    cx = p2[:, 0] - p0[:, 0]; cy = p2[:, 1] - p0[:, 1]
+    cross = np.abs(ax * by - bx * ay)
+    a_len = np.hypot(ax, ay); b_len = np.hypot(bx, by); c_len = np.hypot(cx, cy)
+    denom = a_len * b_len * c_len
+    k = np.where(denom > 1e-12, 2.0 * cross / denom, 0.0)
+    k = np.pad(k, (1, 1), constant_values=0.0)  # endpoints have no Menger curvature
+    # Arc length
     diff = np.diff(a, axis=0)
     seg = np.linalg.norm(diff, axis=1)
     s = np.zeros(len(a))
@@ -53,8 +59,23 @@ def _get_scenario_config(sc_cfg):
     )
 
 
+def _get_scenario_config_from_df(df_sub):
+    """Fallback: extract config from first row of scenario dataframe."""
+    row = df_sub.iloc[0]
+    return SimpleNamespace(
+        start=np.array([row['start_x'], row['start_y']]),
+        goal=np.array([row['goal_x'], row['goal_y']]),
+        th_start=row.get('th_start', 0.0),
+        th_goal=row.get('th_goal', 0.0),
+        kappa_max=row['kappa_max'],
+        radius=row.get('radius', 0.073),
+        xmin=row['xmin'], xmax=row['xmax'],
+        ymin=row['ymin'], ymax=row['ymax'],
+    )
+
+
 def get_workspace_config():
-    """Fallback: create default ScenarioConfig when config.pkl is absent."""
+    """Fallback: create default ScenarioConfig when config.pkl / df cols absent."""
     c = ScenarioConfig()
     c.setup()
     return c
@@ -84,7 +105,13 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    ws = _get_scenario_config(sc_config) if sc_config else get_workspace_config()
+    if sc_config:
+        ws = _get_scenario_config(sc_config)
+    elif {'start_x', 'start_y', 'goal_x', 'goal_y',
+          'kappa_max', 'xmin', 'xmax', 'ymin', 'ymax'}.issubset(df_sub.columns):
+        ws = _get_scenario_config_from_df(df_sub)
+    else:
+        ws = get_workspace_config()
     if start is None:
         start = ws.start
     if goal is None:
@@ -179,7 +206,7 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
 
     # ── Curvature plot ──
     curv_fig, curv_ax = plt.subplots(figsize=(9, 5))
-    curv_ax.axhline(ws.kappa_max, color='gray', ls='--', lw=1, label=f'$\\kappa_{{max}}={ws.kappa_max}$')
+    curv_ax.axhline(ws.kappa_max, color='gray', ls='--', lw=1, label=f'$\\kappa_{{max}}={ws.kappa_max:.2f}$')
     for _, row in df_sub.iterrows():
         pname = row['planner']
         pkey = f"{scenario_label}_{pname}"
