@@ -9,18 +9,32 @@ sys.path.insert(0, Path(__file__).resolve().parent.as_posix())
 from scenario_config import ScenarioConfig
 
 
+def _curvature_and_arc(pts):
+    a = np.asarray(pts)
+    dx = np.gradient(a[:, 0])
+    dy = np.gradient(a[:, 1])
+    ddx = np.gradient(dx)
+    ddy = np.gradient(dy)
+    k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
+    diff = np.diff(a, axis=0)
+    seg = np.linalg.norm(diff, axis=1)
+    s = np.zeros(len(a))
+    s[1:] = np.cumsum(seg)
+    return k, s
+
+
 PLANNER_STYLE = {
-    'rrt_star':          dict(color='#2196F3', ls='-',  lw=1.5, label='RRT*'),
-    'rrt_star_smooth':   dict(color='#00BCD4', ls='--', lw=2.0, label='RRT* + B-spline'),
+    'rrt_star':          dict(color='#2196F3', ls='-x',  lw=1.5, label='RRT*'),
+    'rrt_star_smooth':   dict(color='#00BCD4', ls='-', lw=2.0, label='RRT* + B-spline'),
     'rrt_star_dubins':   dict(color='#F44336', ls='-',  lw=1.5, label='RRT* Dubins'),
-    'rrt_dubins_smooth': dict(color='#FF9800', ls='--', lw=2.0, label='RRT* Dubins + B-spline'),
+    'rrt_dubins_smooth': dict(color='#FF9800', ls='-.', lw=2.0, label='RRT* Dubins + B-spline'),
     'modified_dubins_rrt_star': dict(color="#00FF62", ls='--', lw=2.0, label='Modified Dubins-RRT*'),
     'modified_dubins_rrt_star_ccpoa': dict(color="#0A4922", ls='--', lw=2.0, label='Modified Dubins-RRT* + CCPOA'),
-    'bit_star_dubins':   dict(color='#9C27B0', ls='-.', lw=2.0, label='BIT* Dubins'),
+    'bit_star_dubins':   dict(color='#FFEB3B', ls='-.', lw=2.0, label='BIT* Dubins'),
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color='#4CAF50', ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
-    'rrt_star_asv':      dict(color='#FFEB3B', ls='-',  lw=2.0, label='RRT* ASV'),
+    'rrt_star_asv':      dict(color='#9C27B0', ls='-d',  lw=2.0, label='RRT* ASV'),
 }
 
 
@@ -144,11 +158,32 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
 
     ax.legend(legend_lines, legend_labels, fontsize=7, loc='upper left',
               framealpha=0.9, edgecolor='gray')
-    # ax.set_title(f'Scenario: {scenario_label}', fontsize=13, fontweight='bold')
     
-    
-    
-    
+
+
+    # ── Curvature plot ──
+    curv_fig, curv_ax = plt.subplots(figsize=(9, 5))
+    curv_ax.axhline(ws.kappa_max, color='gray', ls='--', lw=1, label=f'$\\kappa_{{max}}={ws.kappa_max}$')
+    for _, row in df_sub.iterrows():
+        pname = row['planner']
+        pkey = f"{scenario_label}_{pname}"
+        path = paths_store.get(pkey)
+        style = PLANNER_STYLE.get(pname, dict(color='gray', ls='-', lw=1.5))
+        if path is not None and len(path) >= 3:
+            k, s = _curvature_and_arc(path)
+            curv_ax.plot(s, k, color=style['color'], ls=style['ls'], lw=style['lw'],
+                         label=style['label'])
+    curv_ax.set_xlabel('Arc length (m)', fontsize=12)
+    curv_ax.set_ylabel('Curvature $\\kappa$ (m$^{-1}$)', fontsize=12)
+    curv_ax.tick_params(labelsize=10)
+    curv_ax.grid(True, alpha=0.3)
+    curv_ax.legend(fontsize=8, loc='upper right', framealpha=0.9, edgecolor='gray')
+    curv_fig.tight_layout()
+    curv_path = save_dir / f'curvature_{scenario_label}.png'
+    curv_fig.savefig(curv_path, dpi=150, bbox_inches='tight')
+    plt.close(curv_fig)
+    print(f'  Saved {curv_path}')
+
     ax.axis([-2,2, -2,2])
     fig.tight_layout()
     out_path = save_dir / f'{scenario_label}.png'
