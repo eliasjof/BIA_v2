@@ -11,18 +11,18 @@ from scenario_config import ScenarioConfig
 
 
 def _curvature_and_arc(pts):
+    """Same gradient-based curvature as the optimizer's individual_cost_function.
+    Endpoints use one‑sided differences → set to 0 to avoid boundary spikes."""
     a = np.asarray(pts)
-    # Menger curvature of circumcircle through (i-1, i, i+1)
-    p0 = a[:-2]; p1 = a[1:-1]; p2 = a[2:]
-    ax = p1[:, 0] - p0[:, 0]; ay = p1[:, 1] - p0[:, 1]
-    bx = p2[:, 0] - p1[:, 0]; by = p2[:, 1] - p1[:, 1]
-    cx = p2[:, 0] - p0[:, 0]; cy = p2[:, 1] - p0[:, 1]
-    cross = np.abs(ax * by - bx * ay)
-    a_len = np.hypot(ax, ay); b_len = np.hypot(bx, by); c_len = np.hypot(cx, cy)
-    denom = a_len * b_len * c_len
-    k = np.where(denom > 1e-12, 2.0 * cross / denom, 0.0)
-    k = np.pad(k, (1, 1), constant_values=0.0)  # endpoints have no Menger curvature
-    # Arc length
+    dx = np.gradient(a[:, 0])
+    dy = np.gradient(a[:, 1])
+    ddx = np.gradient(dx)
+    ddy = np.gradient(dy)
+    norm_d = np.sqrt(dx**2 + dy**2)
+    cross = dx * ddy - dy * ddx
+    k = np.abs(cross) / (norm_d**3 + 1e-8)
+    k[0] = k[-1] = 0.0  # boundary spikes from one‑sided gradient
+    # Arc length (cumulative chord length)
     diff = np.diff(a, axis=0)
     seg = np.linalg.norm(diff, axis=1)
     s = np.zeros(len(a))
