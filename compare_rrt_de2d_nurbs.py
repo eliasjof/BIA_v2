@@ -463,9 +463,10 @@ def run_pso2d_nurbs(config, seed=None):
 
     t0 = time.perf_counter()
     config.n_generations = 500
-    config.pop_size = 100
+    config.pop_size = 50
     config.alpha_obs = 1000
     config.alpha_kappa = 10.00
+    config.alpha_workspace = 1.00
 
     pso = PSO2D_NURBS(config)
     try:
@@ -475,7 +476,7 @@ def run_pso2d_nurbs(config, seed=None):
                     success=False, length=np.nan, max_kappa=np.nan,
                     collision_free=False, cv_opt=np.nan)
     elapsed = time.perf_counter() - t0
-    pso.plot_convergence()
+    # pso.plot_convergence()
     result = pso.get_best_path()
     if result is None:
         return dict(path=None, raw_path=None, elapsed=elapsed,
@@ -497,16 +498,16 @@ def run_pso2d_nurbs(config, seed=None):
 # ──────────────────────────────────────────────
 
 PLANNERS = [
-    ('rrt_star',          run_rrt_star),
-    ('rrt_star_smooth',   run_rrt_star_smooth),
-    ('rrt_star_dubins',   run_rrt_star_dubins),
-    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
-    # ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
-    ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
-    ('rrt_star_asv',      run_rrt_star_asv),
+    # ('rrt_star',          run_rrt_star),
+    # ('rrt_star_smooth',   run_rrt_star_smooth),
+    # ('rrt_star_dubins',   run_rrt_star_dubins),
+    # # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    # # ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
+    # ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+    # ('rrt_star_asv',      run_rrt_star_asv),
     # ('bit_star_dubins',   run_bit_star_dubins),
     ('de2d_nurbs',        run_de2d_nurbs),
-    # ('pso2d_nurbs',       run_pso2d_nurbs),
+    ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
 
@@ -592,6 +593,15 @@ def _run_single_task(sc, pname, runner_fn):
         cv_opt=cv_opt,
         feasible=feasible,
         n_obs=len(c.obs) if hasattr(c, 'obs') else 0,
+        kappa_max=c.kappa_max,
+        radius=c.radius,
+        nsampling=getattr(c, 'nsampling', np.nan),
+        th_start=getattr(c, 'th_start', 0.0),
+        th_goal=getattr(c, 'th_goal', 0.0),
+        start_x=c.start[0], start_y=c.start[1],
+        goal_x=c.goal[0], goal_y=c.goal[1],
+        xmin=c.xmin, xmax=c.xmax,
+        ymin=c.ymin, ymax=c.ymax,
     )
 
     path_key = f'{label}_{pname}'
@@ -786,12 +796,24 @@ def save_results(df, paths_store, obstacles_store=None, output_dir='comparison_r
     with open(output_dir / 'paths.pkl', 'wb') as f:
         pickle.dump(paths_store, f)
 
+    # Save config per scenario (first row per scenario)
+    cfg_cols = ['kappa_max', 'radius', 'nsampling', 'th_start', 'th_goal',
+                'start_x', 'start_y', 'goal_x', 'goal_y',
+                'xmin', 'xmax', 'ymin', 'ymax']
+    configs = {}
+    for sc_label, grp in df.groupby('scenario'):
+        row = grp.iloc[0]
+        configs[sc_label] = {col: row[col] for col in cfg_cols if col in row}
+    with open(output_dir / 'config.pkl', 'wb') as f:
+        pickle.dump(configs, f)
+
     if obstacles_store:
         with open(output_dir / 'obstacles.pkl', 'wb') as f:
             pickle.dump(obstacles_store, f)
 
     print(f'\nResults saved to {output_dir}/')
     print(f'  summary.pkl / summary.csv  ({len(df)} records)')
+    print(f'  config.pkl                 ({len(configs)} scenarios)')
     print(f'  paths.pkl                  ({len(paths_store)} entries)')
     if obstacles_store:
         print(f'  obstacles.pkl              ({len(obstacles_store)} entries)')
@@ -880,7 +902,7 @@ def main():
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(10)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(1)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles
@@ -892,7 +914,7 @@ def main():
 
         # 3) 1 → 5 obstacles from a progressive pool
         ('progressive', scenarios_progressive(
-            seeds, max_obs=9, pool_seed=22, center_size=0.3)),
+            seeds, max_obs=9, pool_seed=32, center_size=0.3)),
     ]
 
     # ── Uncomment any line below to add more experiments ──

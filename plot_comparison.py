@@ -1,5 +1,6 @@
 import sys, pickle, argparse
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,7 +39,22 @@ PLANNER_STYLE = {
 }
 
 
+def _get_scenario_config(sc_cfg):
+    """Return a namespace object from a config dict (from config.pkl)."""
+    return SimpleNamespace(
+        start=np.array([sc_cfg['start_x'], sc_cfg['start_y']]),
+        goal=np.array([sc_cfg['goal_x'], sc_cfg['goal_y']]),
+        th_start=sc_cfg.get('th_start', 0.0),
+        th_goal=sc_cfg.get('th_goal', 0.0),
+        kappa_max=sc_cfg['kappa_max'],
+        radius=sc_cfg.get('radius', 0.073),
+        xmin=sc_cfg['xmin'], xmax=sc_cfg['xmax'],
+        ymin=sc_cfg['ymin'], ymax=sc_cfg['ymax'],
+    )
+
+
 def get_workspace_config():
+    """Fallback: create default ScenarioConfig when config.pkl is absent."""
     c = ScenarioConfig()
     c.setup()
     return c
@@ -64,11 +80,11 @@ def read_df_safe(results_dir):
 
 def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
                   start=None, goal=None, radius=0.073,
-                  save_dir='plots', planners=None):
+                  save_dir='plots', planners=None, sc_config=None):
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    ws = get_workspace_config()
+    ws = _get_scenario_config(sc_config) if sc_config else get_workspace_config()
     if start is None:
         start = ws.start
     if goal is None:
@@ -210,6 +226,7 @@ def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
     df = read_df_safe(results_dir)
     paths_store = _load_pickle_safe(results_dir / 'paths.pkl')
     obstacles_store = _load_pickle_safe(results_dir / 'obstacles.pkl')
+    configs = _load_pickle_safe(results_dir / 'config.pkl')
 
     scenarios = df['scenario'].unique()
     if scenario_filter:
@@ -221,9 +238,11 @@ def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
     for sc in scenarios:
         df_sub = df[df['scenario'] == sc]
         obstacles = obstacles_store.get(sc, np.array([]))
+        sc_cfg = configs.get(sc) if configs else None
         plot_scenario(sc, df_sub, paths_store, obstacles,
                       start=start, goal=goal, radius=radius,
-                      save_dir=plot_dir, planners=planners)
+                      save_dir=plot_dir, planners=planners,
+                      sc_config=sc_cfg)
 
     print('Done.')
 
