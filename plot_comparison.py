@@ -11,8 +11,7 @@ from scenario_config import ScenarioConfig
 
 
 def _curvature_and_arc(pts):
-    """Same gradient-based curvature as the optimizer's individual_cost_function.
-    Endpoints use one‑sided differences → set to 0 to avoid boundary spikes."""
+    """Gradient‑based curvature — identical to the optimizer's individual_cost_function."""
     a = np.asarray(pts)
     dx = np.gradient(a[:, 0])
     dy = np.gradient(a[:, 1])
@@ -21,7 +20,6 @@ def _curvature_and_arc(pts):
     norm_d = np.sqrt(dx**2 + dy**2)
     cross = dx * ddy - dy * ddx
     k = np.abs(cross) / (norm_d**3 + 1e-8)
-    k[0] = k[-1] = 0.0  # boundary spikes from one‑sided gradient
     # Arc length (cumulative chord length)
     diff = np.diff(a, axis=0)
     seg = np.linalg.norm(diff, axis=1)
