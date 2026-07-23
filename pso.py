@@ -1,6 +1,7 @@
 import numpy as np
 from mealpy import PSO as MealpyPSO, FloatVar
-
+from mealpy.swarm_based.PSO import HPSO_TVAC
+# from mealpy.swarm_based.PSO import PPSO
 
 class PSO:
     def __init__(self, pop_size, dim, max_fes=None, xmin=None, xmax=None,
@@ -61,7 +62,8 @@ class PSO:
                                 static_params=self.static_params)
             CV = self.get_CV(g, h)
             cv_val = CV[0]
-            return f[0] + 1000 * cv_val if cv_val > 1e-5 else f[0]
+            # print(cv_val)
+            return f[0] + cv_val if cv_val > 1e-5 else f[0]
 
         problem = {
             "bounds": FloatVar(lb=self.xmin, ub=self.xmax),
@@ -70,12 +72,18 @@ class PSO:
             "save_population": True,
             "log_to": None,
         }
-
-        model = MealpyPSO.OriginalPSO(
+        model = HPSO_TVAC(
             epoch=self.n_generations,
             pop_size=self.pop_size,
             c1=self.c1, c2=self.c2, w=self.w,
+
         )
+        # model = PPSO(epoch=self.n_generations, pop_size=self.pop_size, c1=self.c1, c2=self.c2, w=self.w)
+        # model = MealpyPSO.OriginalPSO(
+        #     epoch=self.n_generations,
+        #     pop_size=self.pop_size,
+        #     c1=self.c1, c2=self.c2, w=self.w,
+        # )
         model.solve(
             problem,
             starting_solutions=self.initial_pop,
