@@ -50,7 +50,7 @@ def read_df_safe(results_dir):
 
 def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
                   start=None, goal=None, radius=0.073,
-                  save_dir='plots'):
+                  save_dir='plots', planners=None):
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,6 +61,9 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
         goal = ws.goal
 
     has_feas = 'feasible' in df_sub.columns
+
+    if planners is not None:
+        df_sub = df_sub[df_sub['planner'].isin(planners)]
 
     fig, ax = plt.subplots(figsize=(9, 6.5))
 
@@ -167,7 +170,7 @@ def _load_pickle_safe(path):
 
 
 def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
-             start=None, goal=None, radius=0.073):
+             start=None, goal=None, radius=0.073, planners=None):
     results_dir = Path(results_dir)
     df = read_df_safe(results_dir)
     paths_store = _load_pickle_safe(results_dir / 'paths.pkl')
@@ -185,7 +188,7 @@ def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
         obstacles = obstacles_store.get(sc, np.array([]))
         plot_scenario(sc, df_sub, paths_store, obstacles,
                       start=start, goal=goal, radius=radius,
-                      save_dir=plot_dir)
+                      save_dir=plot_dir, planners=planners)
 
     print('Done.')
 
@@ -198,6 +201,25 @@ if __name__ == '__main__':
                         help='Plot only scenarios whose name contains FILTER')
     parser.add_argument('--show', action='store_true',
                         help='Display plots interactively (blocks)')
+    parser.add_argument('--planners', nargs='*', default=None,
+                        help='(opcional) sobrescreve a lista fixa abaixo')
     args = parser.parse_args()
+
+    # Lista de planners para plotar (comente/descomente os que desejar)
+    planners = args.planners if args.planners is not None else [
+        'rrt_star',
+        'rrt_star_smooth',
+        'rrt_star_dubins',
+        'rrt_dubins_smooth',
+        'modified_dubins_rrt_star',
+        'modified_dubins_rrt_star_ccpoa',
+        'bit_star_dubins',
+        'bit_star_theta',
+        'de2d_nurbs',
+        'pso2d_nurbs',
+        'rrt_star_asv',
+    ]
+
     plot_all(results_dir=f'comparison_results/{args.exp}',
-             scenario_filter=args.filter, show=args.show)
+             scenario_filter=args.filter, show=args.show,
+             planners=planners)
