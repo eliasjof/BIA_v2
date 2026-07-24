@@ -29,7 +29,7 @@ def _curvature_and_arc(pts):
 
 
 PLANNER_STYLE = {
-    'rrt_star':          dict(color='#2196F3', ls='-x',  lw=1.5, label='RRT*'),
+    'rrt_star':          dict(color='#2196F3', ls='dashed',  lw=1.5, label='RRT*'),
     'rrt_star_smooth':   dict(color='#00BCD4', ls='-', lw=2.0, label='RRT* + B-spline'),
     'rrt_star_dubins':   dict(color='#F44336', ls='-',  lw=1.5, label='RRT* Dubins'),
     'rrt_dubins_smooth': dict(color='#FF9800', ls='-.', lw=2.0, label='RRT* Dubins + B-spline'),
@@ -39,7 +39,7 @@ PLANNER_STYLE = {
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color='#4CAF50', ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
-    'rrt_star_asv':      dict(color='#9C27B0', ls='-d',  lw=2.0, label='RRT* ASV'),
+    'rrt_star_asv':      dict(color='#9C27B0', ls='dotted',  lw=2.0, label='RRT* ASV'),
 }
 
 
@@ -95,6 +95,45 @@ def read_df_safe(results_dir):
                 df[col] = df[col].astype(bool)
         return df
     raise FileNotFoundError(f'No summary.pkl or summary.csv in {results_dir}')
+
+
+DUBINS_PLANNERS = {
+    'rrt_star_dubins', 'bit_star_dubins', 'rrt_dubins_smooth',
+    'modified_dubins_rrt_star', 'modified_dubins_rrt_star_ccpoa',
+    'rrt_star_asv',
+}
+
+NO_CURV_PLANNERS = {'rrt_star'}
+
+CURV_FEAS_THRESHOLD = 1e-5
+
+
+def ensure_feasible(df):
+    df = df.copy()
+    if 'collision_free' not in df.columns:
+        df['collision_free'] = True
+    feas_list = []
+    for _, row in df.iterrows():
+        col_free = row.get('collision_free', True)
+        if isinstance(col_free, float):
+            col_free = bool(col_free) if not np.isnan(col_free) else True
+        if not col_free:
+            feas_list.append(False)
+        elif row['planner'] in DUBINS_PLANNERS:
+            feas_list.append(True)
+        elif row['planner'] in NO_CURV_PLANNERS:
+            feas_list.append(False)
+        else:
+            cv = row.get('cv')
+            if cv is not None and not (isinstance(cv, float) and np.isnan(cv)):
+                feas_list.append(float(cv) < CURV_FEAS_THRESHOLD)
+            elif 'feasible' in df.columns and not pd.isna(row.get('feasible', np.nan)):
+                feas_list.append(row['feasible'])
+            else:
+                feas_list.append(col_free)
+    df['feasible'] = feas_list
+    df['success'] = df['success'].fillna(False).astype(bool)
+    return df
 
 
 def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
@@ -249,6 +288,7 @@ def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
              start=None, goal=None, radius=0.073, planners=None):
     results_dir = Path(results_dir)
     df = read_df_safe(results_dir)
+    df = ensure_feasible(df)
     paths_store = _load_pickle_safe(results_dir / 'paths.pkl')
     obstacles_store = _load_pickle_safe(results_dir / 'obstacles.pkl')
     configs = _load_pickle_safe(results_dir / 'config.pkl')
