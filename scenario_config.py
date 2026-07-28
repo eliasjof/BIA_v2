@@ -181,7 +181,7 @@ class ScenarioConfig:
         ax.tick_params(labelsize=10)
         ax.grid()
         ax.legend(fontsize=10)
-        ax.set_title('Scenario')
+        # ax.set_title('Scenario')
         if show:
             plt.show()
         return ax

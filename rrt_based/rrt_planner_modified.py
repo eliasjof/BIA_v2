@@ -1639,17 +1639,69 @@ class RRTStarASV(RRTStar):
     def get_curvature_analytical(self):
         gi = self.search_best_goal_node()
         if gi is None:
-            raise ValueError
-        path = self._build_final_path(gi)
-        if path is None or len(path) < 3:
-            raise ValueError
-        arr = np.asarray(path)
-        dx = np.gradient(arr[:, 0])
-        dy = np.gradient(arr[:, 1])
-        ddx = np.gradient(dx)
-        ddy = np.gradient(dy)
-        k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-10)
-        return k, np.cumsum(np.hypot(dx, dy))
+            raise ValueError("No goal node found")
+
+        node = self.node_list[gi]
+        node_path = []
+        n = node
+        while n.parent is not None:
+            node_path.append(n)
+            n = n.parent
+        node_path.append(n)
+        node_path.reverse()
+
+        seq = self.shortcut_node_path(node_path)
+
+        curvatures = []
+        arc_positions = [0.0]
+
+        for i in range(len(seq) - 1):
+            ni, nj = seq[i], seq[i + 1]
+            try:
+                _, _, _, mode, lengths = plan_dubins_path(
+                    ni.x, ni.y, ni.yaw,
+                    nj.x, nj.y, nj.yaw,
+                    self.curvature, step_size=self.step_size)
+                for m, l in zip(mode, lengths):
+                    if abs(l) < 1e-12:
+                        continue
+                    k = self.curvature if m in ('L', 'R') else 0.0
+                    npts = max(1, int(abs(l) / self.step_size))
+                    seg_step = abs(l) / npts
+                    curvatures.extend([k] * npts)
+                    for _ in range(npts):
+                        arc_positions.append(arc_positions[-1] + seg_step)
+            except Exception:
+                pass
+
+        last = seq[-1]
+        d_g = math.hypot(last.x - self.end.x, last.y - self.end.y)
+        yaw_g = abs(angle_mod(last.yaw - self.end.yaw))
+        if d_g >= 1e-4 or yaw_g >= 1e-3:
+            try:
+                _, _, _, mode, lengths = plan_dubins_path(
+                    last.x, last.y, last.yaw,
+                    self.end.x, self.end.y, self.end.yaw,
+                    self.curvature, step_size=self.step_size)
+                for m, l in zip(mode, lengths):
+                    if abs(l) < 1e-12:
+                        continue
+                    k = self.curvature if m in ('L', 'R') else 0.0
+                    npts = max(1, int(abs(l) / self.step_size))
+                    seg_step = abs(l) / npts
+                    curvatures.extend([k] * npts)
+                    for _ in range(npts):
+                        arc_positions.append(arc_positions[-1] + seg_step)
+            except Exception:
+                pass
+
+        s = np.array(arc_positions)
+        k = np.array(curvatures)
+        if len(k) < len(s):
+            k = np.append(k, k[-1] if len(k) > 0 else 0.0)
+        elif len(s) < len(k):
+            s = np.append(s, s[-1])
+        return k[:len(s)], s[:len(k)]
 
 
 # ═══════════════════════════════════════════════════════════════

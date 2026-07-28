@@ -28,18 +28,30 @@ def _curvature_and_arc(pts):
     return k, s
 
 
+def _curvature_analytical_from_dubins(pts, kappa_max):
+    """Approximate analytical curvature for Dubins paths by classifying
+    turn segments (|curvature| ≈ kappa_max) vs straight segments (≈ 0)."""
+    k_num, s = _curvature_and_arc(pts)
+    k_anal = np.where(k_num > kappa_max * 0.3, kappa_max, 0.0)
+    n = max(3, len(k_anal) // 100)
+    kernel = np.ones(n) / n
+    k_anal = np.convolve(k_anal, kernel, mode='same')
+    k_anal = np.where(k_anal > kappa_max * 0.5, kappa_max, 0.0)
+    return k_anal, s
+
+
 PLANNER_STYLE = {
-    'rrt_star':          dict(color='#2196F3', ls='dashed',  lw=1.5, label='RRT*'),
-    'rrt_star_smooth':   dict(color='#00BCD4', ls='-', lw=2.0, label='RRT* + B-spline'),
-    'rrt_star_dubins':   dict(color='#F44336', ls='-',  lw=1.5, label='RRT* Dubins'),
+    'rrt_star':          dict(color="#4CA3AF", ls='dashed',  lw=1.5, label='RRT*'),
+    'rrt_star_smooth':   dict(color="#2B5E64", ls='--', lw=2.0, label='RRT* + B-spline'),
+    'rrt_star_dubins':   dict(color="#8527B0", ls='dotted',  lw=1.5, label='RRT* Dubins'),
     'rrt_dubins_smooth': dict(color='#FF9800', ls='-.', lw=2.0, label='RRT* Dubins + B-spline'),
     'modified_dubins_rrt_star': dict(color="#00FF62", ls='--', lw=2.0, label='Modified Dubins-RRT*'),
     'modified_dubins_rrt_star_ccpoa': dict(color="#0A4922", ls='--', lw=2.0, label='Modified Dubins-RRT* + CCPOA'),
     'bit_star_dubins':   dict(color='#FFEB3B', ls='-.', lw=2.0, label='BIT* Dubins'),
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
-    'de2d_nurbs':        dict(color='#4CAF50', ls='-',  lw=2.5, label='DE2D_NURBS'),
+    'de2d_nurbs':        dict(color="blue", ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
-    'rrt_star_asv':      dict(color='#9C27B0', ls='dotted',  lw=2.0, label='RRT* ASV'),
+    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),
 }
 
 
@@ -97,6 +109,8 @@ def read_df_safe(results_dir):
     raise FileNotFoundError(f'No summary.pkl or summary.csv in {results_dir}')
 
 
+INFEASIBLE_ALPHA = 1.0
+
 DUBINS_PLANNERS = {
     'rrt_star_dubins', 'bit_star_dubins', 'rrt_dubins_smooth',
     'modified_dubins_rrt_star', 'modified_dubins_rrt_star_ccpoa',
@@ -138,7 +152,8 @@ def ensure_feasible(df):
 
 def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
                   start=None, goal=None, radius=0.073,
-                  save_dir='plots', planners=None, sc_config=None):
+                  save_dir='plots', planners=None, sc_config=None,
+                  ext='png'):
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -172,11 +187,13 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     if obstacles is not None and len(obstacles):
         for ob in obstacles:
             ox, oy, size = ob[0], ob[1], ob[2]
-            ax.add_patch(plt.Circle((ox, oy), size,
-                                    color='#8BC34A', alpha=0.35,
-                                    ec='#558B2F', lw=1))
+            # ax.add_patch(plt.Circle((ox, oy), size,
+                                    # color='#8BC34A', alpha=0.35,
+                                    # ec='#558B2F', lw=1))
+            # ax.add_patch(plt.Circle((ox, oy), size + radius,
+            #                         color='#FFCC80', alpha=0.15, ec='none'))
             ax.add_patch(plt.Circle((ox, oy), size + radius,
-                                    color='#FFCC80', alpha=0.15, ec='none'))
+                                                color="green", alpha=0.5, ec='none'))
 
     ax.plot(start[0], start[1], 's', color='#2E7D32',
             markersize=10, zorder=5, label='Start')
@@ -206,9 +223,8 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
         if path is not None and len(path) >= 2:
             lw = style['lw']
             if has_feas and not row['feasible']:
-                lw = style['lw']
                 ax.plot(path[:, 0], path[:, 1], color=style['color'],
-                        ls=style['ls'], lw=lw, alpha=0.5, zorder=4)
+                        ls=style['ls'], lw=lw, alpha=INFEASIBLE_ALPHA, zorder=4)
             else:
                 ax.plot(path[:, 0], path[:, 1], color=style['color'],
                         ls=style['ls'], lw=lw, zorder=4)
@@ -250,7 +266,13 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
         path = paths_store.get(pkey)
         style = PLANNER_STYLE.get(pname, dict(color='gray', ls='-', lw=1.5))
         if path is not None and len(path) >= 3:
-            k, s = _curvature_and_arc(path)
+            curv_key = pkey + '_curvature'
+            if curv_key in paths_store:
+                k, s = paths_store[curv_key]
+            elif pname in DUBINS_PLANNERS:
+                k, s = _curvature_analytical_from_dubins(path, ws.kappa_max)
+            else:
+                k, s = _curvature_and_arc(path)
             curv_ax.plot(s, k, color=style['color'], ls=style['ls'], lw=style['lw'],
                          label=style['label'])
     curv_ax.set_xlabel('Arc length (m)', fontsize=12)
@@ -259,14 +281,14 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     curv_ax.grid(True, alpha=0.3)
     curv_ax.legend(fontsize=8, loc='upper right', framealpha=0.9, edgecolor='gray')
     curv_fig.tight_layout()
-    curv_path = save_dir / f'curvature_{scenario_label}.png'
+    curv_path = save_dir / f'curvature_{scenario_label}.{ext}'
     curv_fig.savefig(curv_path, dpi=150, bbox_inches='tight')
     plt.close(curv_fig)
     print(f'  Saved {curv_path}')
 
     ax.axis([-2,2, -2,2])
     fig.tight_layout()
-    out_path = save_dir / f'{scenario_label}.png'
+    out_path = save_dir / f'{scenario_label}.{ext}'
     fig.savefig(out_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f'  Saved {out_path}')
@@ -285,7 +307,8 @@ def _load_pickle_safe(path):
 
 
 def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
-             start=None, goal=None, radius=0.073, planners=None):
+             start=None, goal=None, radius=0.073, planners=None,
+             seed=None, prog=None, ext='png'):
     results_dir = Path(results_dir)
     df = read_df_safe(results_dir)
     df = ensure_feasible(df)
@@ -293,11 +316,24 @@ def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
     obstacles_store = _load_pickle_safe(results_dir / 'obstacles.pkl')
     configs = _load_pickle_safe(results_dir / 'config.pkl')
 
-    scenarios = df['scenario'].unique()
+    df_all = df.copy()
+    if seed is not None:
+        df = df[df['seed'] == seed]
+    scenarios = list(df['scenario'].unique())
     if scenario_filter:
         scenarios = [s for s in scenarios if scenario_filter in s]
+    if prog is not None:
+        scenarios = [s for s in scenarios if prog in s]
 
     plot_dir = results_dir / 'plots'
+
+    if not scenarios:
+        print(f'  No scenarios matched the filter.')
+        print(f'  All available scenarios ({len(df_all["scenario"].unique())}):')
+        for sc in sorted(df_all['scenario'].unique()):
+            seeds = df_all[df_all['scenario'] == sc]['seed'].unique()
+            print(f'    {sc}  (seeds: {sorted(seeds)})')
+        return
 
     print(f'Plotting {len(scenarios)} scenario(s) from {results_dir} ...')
     for sc in scenarios:
@@ -307,7 +343,7 @@ def plot_all(results_dir='comparison_results', scenario_filter=None, show=False,
         plot_scenario(sc, df_sub, paths_store, obstacles,
                       start=start, goal=goal, radius=radius,
                       save_dir=plot_dir, planners=planners,
-                      sc_config=sc_cfg)
+                      sc_config=sc_cfg, ext=ext)
 
     print('Done.')
 
@@ -318,8 +354,14 @@ if __name__ == '__main__':
                         help='Experiment subdirectory under comparison_results/')
     parser.add_argument('--filter', default=None,
                         help='Plot only scenarios whose name contains FILTER')
+    parser.add_argument('--prog', default=None,
+                        help='Filter by scenario name prefix (e.g. prog05, no_obs, chicane)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Filter by seed number (e.g. 42)')
     parser.add_argument('--show', action='store_true',
                         help='Display plots interactively (blocks)')
+    parser.add_argument('--ext', default='png', choices=['png', 'pdf'],
+                        help='Output format (default: png)')
     parser.add_argument('--planners', nargs='*', default=None,
                         help='(opcional) sobrescreve a lista fixa abaixo')
     args = parser.parse_args()
@@ -329,11 +371,11 @@ if __name__ == '__main__':
         'rrt_star',
         'rrt_star_smooth',
         'rrt_star_dubins',
-        'rrt_dubins_smooth',
-        'modified_dubins_rrt_star',
-        'modified_dubins_rrt_star_ccpoa',
-        'bit_star_dubins',
-        'bit_star_theta',
+        # 'rrt_dubins_smooth',
+        # 'modified_dubins_rrt_star',
+        # 'modified_dubins_rrt_star_ccpoa',
+        # 'bit_star_dubins',
+        # 'bit_star_theta',
         'de2d_nurbs',
         'pso2d_nurbs',
         'rrt_star_asv',
@@ -341,4 +383,5 @@ if __name__ == '__main__':
 
     plot_all(results_dir=f'comparison_results/{args.exp}',
              scenario_filter=args.filter, show=args.show,
-             planners=planners)
+             planners=planners, seed=args.seed, prog=args.prog,
+             ext=args.ext)

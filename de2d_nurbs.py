@@ -540,7 +540,7 @@ class DE2D_NURBS:
         lines1, labels1 = ax1.get_legend_handles_labels()
         lines2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
-        ax1.set_title('Convergence')
+        # ax1.set_title('Convergence')
         fig.tight_layout()
         plt.show()
         return fig, ax1, ax2

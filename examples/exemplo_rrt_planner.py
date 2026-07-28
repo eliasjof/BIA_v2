@@ -66,8 +66,15 @@ def exemplo_rrt_star(config, ax=None, curv_ax=None):
         p.draw_scenario(ax=ax, show=False)
     if path:
         raw = np.array(path)
-        ax.plot(raw[:, 0], raw[:, 1], 'b-', lw=1.5, alpha=0.4, label='RRT* (raw)')
-        ax.plot(smooth[:, 0], smooth[:, 1], 'r-', lw=2, label='B-Spline')
+        cv = _check_path_cv(raw, config)
+        fi = _make_feas_info(cv)
+        sym = CHECK if fi["feasible"] else CROSS
+        comp = np.sum(np.linalg.norm(np.diff(raw, axis=0), axis=1))
+        ax.plot(raw[:, 0], raw[:, 1], 'b-', lw=1.5, alpha=0.4,
+                label=f'RRT* (raw) [{sym} CV={cv:.2e}]')
+        if smooth is not None:
+            ax.plot(smooth[:, 0], smooth[:, 1], 'r-', lw=2,
+                    label=f'B-Spline ({comp:.2f}m) [{sym}]')
     ax.legend(fontsize=10)
     ax.set_title("RRT* Classico")
     if own_fig:
@@ -108,7 +115,7 @@ def exemplo_rrt_star_dubins(config, ax=None, curv_ax=None):
     fi = _make_feas_info(cv)
     sym = CHECK if fi["feasible"] else CROSS
     label = f'RRT* Dubins ({comp:.2f}m) [{sym} CV={cv:.2e}]'
-    style = dict(color='#F44336', ls='-', lw=1.5, label=label)
+    style = dict(color='#8527B0', ls='dotted', lw=1.5, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("RRT* Dubins")
@@ -148,10 +155,58 @@ def exemplo_bit_star_dubins(config, ax=None, curv_ax=None):
     fi = _make_feas_info(cv)
     sym = CHECK if fi["feasible"] else CROSS
     label = f'BIT* Dubins ({comp:.2f}m) [{sym} CV={cv:.2e}]'
-    style = dict(color='#9C27B0', ls='-.', lw=2.0, label=label)
+    style = dict(color='#FFEB3B', ls='-.', lw=2.0, label=label)
     ax.plot(a[:, 0], a[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("BIT* Dubins")
+    if own_fig:
+        ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
+        fig.tight_layout()
+        return fig
+    return p, a, fi
+
+
+def exemplo_rrt_star_asv(config, ax=None, curv_ax=None):
+    print("RRT* ASV")
+    from rrt_based.rrt_planner_modified import RRTStarASV
+    config.setup()
+    start = [float(config.start[0]), float(config.start[1]), float(config.th_start)]
+    goal = [float(config.goal[0]), float(config.goal[1]), float(config.th_goal)]
+    obstacle_list = list(config.obs)
+    p = RRTStarASV(
+        start=start, goal=goal,
+        obstacle_list=obstacle_list,
+        rand_area=[config.xmin, config.xmax],
+        rand_area_x=[config.xmin, config.xmax],
+        rand_area_y=[config.ymin, config.ymax],
+        goal_sample_rate=30, max_iter=5000,
+        connect_circle_dist=4.5,
+        robot_radius=config.radius,
+        step_size=0.05,
+        curvature=config.kappa_max,
+        cost_a=1.20, cost_b=1.5, max_nodes=None)
+    raw = p.planning(animation=False, search_until_max_iter=True)
+    print(f"  {'OK' if raw else 'FAIL'}")
+    own_fig = ax is None
+    if not raw:
+        print("  FAIL")
+        if own_fig:
+            return fig
+        return None
+    a = np.array(raw)
+    if own_fig:
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        ax, curv_ax = axes
+        config.draw_scenario(ax=ax, show=False)
+    comp = np.sum(np.linalg.norm(np.diff(a, axis=0), axis=1))
+    cv = _check_path_cv(a, config)
+    fi = _make_feas_info(cv)
+    sym = CHECK if fi["feasible"] else CROSS
+    label = f'RRT* ASV ({comp:.2f}m) [{sym} CV={cv:.2e}]'
+    style = dict(color='#F44336', ls=':', lw=2.0, label=label)
+    ax.plot(a[:, 0], a[:, 1], **style)
+    ax.legend(fontsize=10)
+    ax.set_title("RRT* ASV")
     if own_fig:
         ax.axis([config.xmin, config.xmax, config.ymin, config.ymax])
         fig.tight_layout()
@@ -167,20 +222,22 @@ def exemplo_de2d_nurbs(config, ax=None, curv_ax=None):
     result = de.get_best_path()
     if result is None:
         print("  FAIL")
+        plt.close()
         return None
     pts = result["points"]
     comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
-    cv = float(de.agent.log_best_CV[-1]) if hasattr(de.agent, 'log_best_CV') and len(de.agent.log_best_CV) > 0 else 0.0
+    cv = _check_path_cv(pts, config)
     fi = _make_feas_info(cv)
     print(f"  OK  comp={comp:.2f}m  CV={cv:.2e}")
     own_fig = ax is None
     if own_fig:
+        de.plot_convergence()
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax, curv_ax = axes
         de.draw_scenario(ax=ax, show=False)
     sym = CHECK if fi["feasible"] else CROSS
     label = f'DE2D_NURBS ({comp:.2f}m) [{sym} CV={cv:.2e}]'
-    style = dict(color='#4CAF50', ls='-', lw=2.5, label=label)
+    style = dict(color='blue', ls='-', lw=2.5, label=label)
     ax.plot(pts[:, 0], pts[:, 1], **style)
     ax.legend(fontsize=10)
     ax.set_title("DE2D_NURBS")
@@ -198,14 +255,16 @@ def exemplo_pso2d_nurbs(config, ax=None, curv_ax=None):
     result = pso.get_best_path()
     if result is None:
         print("  FAIL")
+        plt.close()
         return None
     pts = result["points"]
     comp = np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1))
-    cv = float(pso.agent.log_best_CV[-1]) if hasattr(pso.agent, 'log_best_CV') and len(pso.agent.log_best_CV) > 0 else 0.0
+    cv = _check_path_cv(pts, config)
     fi = _make_feas_info(cv)
     print(f"  OK  comp={comp:.2f}m  CV={cv:.2e}")
     own_fig = ax is None
     if own_fig:
+        pso.plot_convergence()
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         ax, curv_ax = axes
         pso.draw_scenario(ax=ax, show=False)
@@ -264,44 +323,53 @@ def exemplo_bit_star_theta(config, ax=None, curv_ax=None):
 
 if __name__ == '__main__':
     config = ScenarioConfig()
-    config.seed = 32
+    config.seed = 22
     config.obstacle_type = "circles"
-    config.occupancy_rate = 0.2
-    config.start = np.array([-1.4, -0.8])
-    config.goal = np.array([1.4, 0.8])
+    config.occupancy_rate = 0.120
+    config.start = np.array([-2., -0.8])
+    config.goal = np.array([2, 1.5])
     config.th_start = np.deg2rad(0)
-    config.th_goal = np.deg2rad(0)
+    config.th_goal = np.deg2rad(30)
     config.radius = 0.073
     config.kappa_max = 1 / 0.73
     config.max_fes = None
-    config.n_generations = 200
+    config.n_generations = 450
     config.pop_size = 100
-    config.nsampling = 120
-    config.scale_x = 2.0
-    config.scale_y = 2.0
-    config.xmin = -2.0
-    config.xmax = 2.0
-    config.ymin = -2.0
-    config.ymax = 2.0
-    config.lambda_f = config.radius
-    config.lambda_i = config.radius
+    config.nsampling = 250
+    
+    config.scale_x = 2.1
+    config.scale_y = 2.1
+    config.xmin = -2.1
+    config.xmax = 2.1
+    config.ymin = -2.1
+    config.ymax = 2.1
+    config.width = config.scale_x*2
+    config.height = config.scale_y*2
+    config.lambda_i = config.radius*1.5
+    config.lambda_f = config.radius*2
+    config.alpha_workspace = 5
+    config.alpha_obs = 200
+    config.alpha_kappa = 10
+    config.safe_radius = 0.4
 
     # ── Cada figura separada (True) ou um único figure comparativo (False) ──
     MODO_FIGURAS_SEPARADAS = False
+    MOSTRAR_CONVERGENCIA = True
 
     planners = [
-        exemplo_bit_star_dubins,
+        # exemplo_rrt_star_asv,
         exemplo_de2d_nurbs,
         exemplo_pso2d_nurbs,
     ]
 
     planner_colors = {
-        exemplo_rrt_star:        '#2196F3',
-        exemplo_rrt_star_dubins: '#F44336',
-        exemplo_bit_star_dubins: '#9C27B0',
-        exemplo_de2d_nurbs:      '#4CAF50',
+        exemplo_rrt_star:        '#4CA3AF',
+        exemplo_rrt_star_dubins: '#8527B0',
+        exemplo_bit_star_dubins: '#FFEB3B',
+        exemplo_de2d_nurbs:      'blue',
         exemplo_pso2d_nurbs:     '#795548',
         exemplo_bit_star_theta:  '#E91E63',
+        exemplo_rrt_star_asv:    '#F44336',
     }
 
     if MODO_FIGURAS_SEPARADAS:
@@ -321,7 +389,7 @@ if __name__ == '__main__':
         ax.set_xlim(config.xmin, config.xmax)
         ax.set_ylim(config.ymin, config.ymax)
         ax.set_aspect('equal')
-        ax.set_title("Comparação de Planejadores")
+        # ax.set_title("Comparação de Planejadores")
 
         print("\n=== Factibilidade ===")
         for fn, obj, pts, fi in results:
@@ -333,6 +401,8 @@ if __name__ == '__main__':
             inner = getattr(obj, 'planner', None)
             if inner is not None and hasattr(inner, 'get_curvature_analytical'):
                 k, s = inner.get_curvature_analytical()
+            elif hasattr(obj, 'get_curvature_analytical'):
+                k, s = obj.get_curvature_analytical()
             else:
                 k, s = _compute_curvature_and_arc(pts)
             label = fn.__name__.replace('exemplo_', '').replace('_', ' ')
@@ -341,11 +411,39 @@ if __name__ == '__main__':
                         linewidth=1.5, label=rf'$\kappa_{{\mathrm{{max}}}}$ = {config.kappa_max}')
         curv_ax.set_xlabel('Arc length', fontsize=12)
         curv_ax.set_ylabel('Curvature', fontsize=12)
-        curv_ax.set_title("Curvatura", fontsize=14)
+        # curv_ax.set_title("Curvatura", fontsize=14)
         curv_ax.legend(fontsize=10)
         curv_ax.grid(True, alpha=0.3)
         fig.tight_layout()
         figs = [fig]
+
+    if MOSTRAR_CONVERGENCIA:
+        conv_agents = [(fn, obj) for fn, obj, _, _ in results
+                       if hasattr(obj, 'agent') and hasattr(obj.agent, 'log_best_f')]
+        if conv_agents:
+            n = len(conv_agents)
+            fig_c, axes = plt.subplots(1, n, figsize=(7 * n, 5), squeeze=False)
+            for idx, (fn, obj) in enumerate(conv_agents):
+                ax1 = axes[0, idx]
+                gen = range(len(obj.agent.log_best_f))
+                ax1.plot(gen, obj.agent.log_best_f, 'b-', label='Best Fitness')
+                ax1.set_xlabel('Generation')
+                ax1.set_ylabel('Best Fitness', color='b')
+                ax1.tick_params(axis='y', labelcolor='b')
+                ax1.grid(True)
+                ax2 = ax1.twinx()
+                cv = np.array(obj.agent.log_best_CV)
+                cv[cv <= 1e-6] = 0
+                ax2.plot(gen, cv, 'r--', label='Best CV')
+                ax2.set_ylabel('Best CV', color='r')
+                ax2.tick_params(axis='y', labelcolor='r')
+                label = fn.__name__.replace('exemplo_', '').replace('_', ' ')
+                ax1.set_title(f'{label} Convergence')
+                lines1, labels1 = ax1.get_legend_handles_labels()
+                lines2, labels2 = ax2.get_legend_handles_labels()
+                ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+            fig_c.tight_layout()
+            figs.append(fig_c)
 
     if figs:
         plt.show()
