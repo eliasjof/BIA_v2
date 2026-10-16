@@ -1091,20 +1091,21 @@ class RRTPlanner:
         s[1:] = np.cumsum(seg)
         return k, s
 
-    def smooth_path(self, n_points=500, s=0.015, k=3, n_waypoints=20):
+    def smooth_path(self, n_points=500, s=0.08, k=3, n_waypoints=15):
         if self._path is None:
             return None
         from scipy.interpolate import splprep, splev
         full = np.array(self._path)
-        step = max(1, len(full) // n_waypoints)
-        wx = list(full[::step, 0])
-        wy = list(full[::step, 1])
-        if wx[-1] != full[-1, 0]:
-            wx.append(full[-1, 0])
-            wy.append(full[-1, 1])
+        if len(full) > n_waypoints:
+            indices = np.linspace(0, len(full) - 1, n_waypoints, dtype=int)
+            wx = list(full[indices, 0])
+            wy = list(full[indices, 1])
+        else:
+            wx = list(full[:, 0])
+            wy = list(full[:, 1])
         w = np.ones(len(wx))
-        w[0] = 1000.0
-        w[-1] = 1000.0
+        w[0] = 10000.0
+        w[-1] = 10000.0
         tck, _ = splprep([wx, wy], w=w, s=s, k=min(k, len(wx) - 1))
         u = np.linspace(0, 1, n_points)
         smooth = np.column_stack(splev(u, tck))
