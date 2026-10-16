@@ -1,3 +1,4 @@
+from matplotlib.lines import lineMarkers
 import sys, pickle, argparse
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,7 +52,11 @@ PLANNER_STYLE = {
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color="blue", ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
-    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),
+    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),    
+    'rrt_star_ccdist_3_0':      dict(color="#585086", ls='dashdot', lineMarkers='o',  lw=1.50, label='RRT* CCDIST 3.0'),
+    'rrt_star_smooth_ccdist_3_0':      dict(color="#8F0D63", ls='-.',  lw=1.50, label='RRT* + B-spline CCDIST 3.0'),
+
+    
 }
 
 
@@ -369,19 +374,22 @@ if __name__ == '__main__':
     # Lista de planners para plotar (comente/descomente os que desejar)
     planners = args.planners if args.planners is not None else [
         'rrt_star',
-        'rrt_star_smooth',
-        'rrt_star_dubins',
+        # 'rrt_star_smooth',
+        # 'rrt_star_dubins',
         # 'rrt_dubins_smooth',
         # 'modified_dubins_rrt_star',
         # 'modified_dubins_rrt_star_ccpoa',
         # 'bit_star_dubins',
         # 'bit_star_theta',
+        # 'rrt_star_smooth_ccdist_3_0',
+        'rrt_star_ccdist_3_0',
+        'rrt_star_smooth_ccdist_3_0',
         'de2d_nurbs',
         'pso2d_nurbs',
-        'rrt_star_asv',
+        # 'rrt_star_asv',
     ]
 
-    plot_all(results_dir=f'comparison_results/{args.exp}',
+    plot_all(results_dir=f'comparison_results_paper/{args.exp}',
              scenario_filter=args.filter, show=args.show,
              planners=planners, seed=args.seed, prog=args.prog,
              ext=args.ext)
