@@ -297,7 +297,7 @@ def run_rrt_star_asv(config, seed=None, cost_a=1.20, cost_b=1.5):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def smooth_path_rrt(planner, raw_path, n_waypoints=20, s=0.015):
+def smooth_path_rrt(planner, raw_path, n_waypoints=15, s=0.08):
     if raw_path is None or len(raw_path) < 4:
         return None
     # Temporarily set _path so smooth_path() works
@@ -309,7 +309,7 @@ def smooth_path_rrt(planner, raw_path, n_waypoints=20, s=0.015):
         return None
 
 
-def run_rrt_star_smooth(config, seed=None, n_waypoints=20, s=0.015):
+def run_rrt_star_smooth(config, seed=None, n_waypoints=15, s=0.08):
     kw = dict(max_iter=3000, connect_circle_dist=2.0,
               goal_sample_rate=20, search_until_max_iter=True,
               step_size=0.10)
@@ -339,12 +339,12 @@ def run_rrt_star_smooth(config, seed=None, n_waypoints=20, s=0.015):
     else:
         result.update(path=raw_arr, success=True,
                       length=path_length(raw_arr),
-                      max_kappa=np.nan,
+                      max_kappa=max_curvature_numerical(raw_arr),
                       collision_free=is_collision_free(raw_arr, config.obs, config.radius))
     return result
 
 
-def run_rrt_dubins_smooth(config, seed=None, n_waypoints=20, s=0.015):
+def run_rrt_dubins_smooth(config, seed=None, n_waypoints=15, s=0.08):
     kw = dict(max_iter=2000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
@@ -449,7 +449,7 @@ def run_rrt_star_smooth_ccdist_1_5(config, seed=None):
         return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
                     length=np.nan, max_kappa=np.nan, collision_free=False)
     raw_arr = np.asarray(raw)
-    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=20, s=0.015)
+    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=15, s=0.08)
     if smooth_arr is not None and len(smooth_arr) >= 2:
         length = path_length(smooth_arr)
         k_max = max_curvature_numerical(smooth_arr)
@@ -457,11 +457,11 @@ def run_rrt_star_smooth_ccdist_1_5(config, seed=None):
         return dict(path=smooth_arr, raw_path=raw_arr, elapsed=elapsed,
                     success=True, length=length, max_kappa=k_max,
                     collision_free=col_free)
-    # fallback to raw
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
+    k_max_raw = max_curvature_numerical(raw_arr)
     return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
-                success=True, length=length, max_kappa=np.nan,
+                success=True, length=length, max_kappa=k_max_raw,
                 collision_free=col_free)
 
 
@@ -486,7 +486,7 @@ def run_rrt_star_smooth_ccdist_2_5(config, seed=None):
         return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
                     length=np.nan, max_kappa=np.nan, collision_free=False)
     raw_arr = np.asarray(raw)
-    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=20, s=0.015)
+    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=15, s=0.08)
     if smooth_arr is not None and len(smooth_arr) >= 2:
         length = path_length(smooth_arr)
         k_max = max_curvature_numerical(smooth_arr)
@@ -496,8 +496,9 @@ def run_rrt_star_smooth_ccdist_2_5(config, seed=None):
                     collision_free=col_free)
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
+    k_max_raw = max_curvature_numerical(raw_arr)
     return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
-                success=True, length=length, max_kappa=np.nan,
+                success=True, length=length, max_kappa=k_max_raw,
                 collision_free=col_free)
 
 
@@ -516,7 +517,7 @@ def run_rrt_star_smooth_ccdist_3_0(config, seed=None):
         return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
                     length=np.nan, max_kappa=np.nan, collision_free=False)
     raw_arr = np.asarray(raw)
-    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=20, s=0.015)
+    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=15, s=0.08)
     if smooth_arr is not None and len(smooth_arr) >= 2:
         length = path_length(smooth_arr)
         k_max = max_curvature_numerical(smooth_arr)
@@ -526,8 +527,9 @@ def run_rrt_star_smooth_ccdist_3_0(config, seed=None):
                     collision_free=col_free)
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
+    k_max_raw = max_curvature_numerical(raw_arr)
     return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
-                success=True, length=length, max_kappa=np.nan,
+                success=True, length=length, max_kappa=k_max_raw,
                 collision_free=col_free)
 
 
