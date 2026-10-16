@@ -52,11 +52,15 @@ PLANNER_STYLE = {
     'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color="blue", ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
-    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),    
-    'rrt_star_ccdist_3_0':      dict(color="#585086", ls='dashdot', lineMarkers='o',  lw=1.50, label='RRT* CCDIST 3.0'),
-    'rrt_star_smooth_ccdist_3_0':      dict(color="#8F0D63", ls='-.',  lw=1.50, label='RRT* + B-spline CCDIST 3.0'),
-
-    
+    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),
+    'rrt_star_ccdist_1_5': dict(color="#3F51B5", ls='--', lw=1.5, label='RRT* CCDIST 1.5'),
+    'rrt_star_ccdist_2_5': dict(color="#673AB7", ls='--', lw=1.5, label='RRT* CCDIST 2.5'),
+    'rrt_star_ccdist_3_0': dict(color="#585086", ls='dashdot', lw=1.5, label='RRT* CCDIST 3.0'),
+    'rrt_star_smooth_ccdist_1_5': dict(color="#009688", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 1.5'),
+    'rrt_star_smooth_ccdist_2_5': dict(color="#4CAF50", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 2.5'),
+    'rrt_star_smooth_ccdist_3_0': dict(color="#8F0D63", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 3.0'),
+    'rrt_star_dubins_ccdist_3_5': dict(color="#E91E63", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 3.5'),
+    'rrt_star_dubins_ccdist_6_0': dict(color="#9C27B0", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 6.0'),
 }
 
 
@@ -138,19 +142,20 @@ def ensure_feasible(df):
             col_free = bool(col_free) if not np.isnan(col_free) else True
         if not col_free:
             feas_list.append(False)
-        elif row['planner'] in DUBINS_PLANNERS:
-            feas_list.append(True)
-        elif row['planner'] in NO_CURV_PLANNERS:
-            feas_list.append(False)
+            continue
+        
+        cv = row.get('cv')
+        if cv is not None and not (isinstance(cv, float) and np.isnan(cv)):
+            feas_list.append(float(cv) <= CURV_FEAS_THRESHOLD)
+        elif 'feasible' in df.columns and not pd.isna(row.get('feasible', np.nan)):
+            feas_list.append(bool(row['feasible']))
         else:
-            cv = row.get('cv')
-            if cv is not None and not (isinstance(cv, float) and np.isnan(cv)):
-                feas_list.append(float(cv) < CURV_FEAS_THRESHOLD)
-            elif 'feasible' in df.columns and not pd.isna(row.get('feasible', np.nan)):
-                feas_list.append(row['feasible'])
-            else:
-                feas_list.append(col_free)
+            feas_list.append(col_free)
     df['feasible'] = feas_list
+    if 'cv' in df.columns:
+        df['cv'] = df['cv'].apply(lambda x: 0.0 if (isinstance(x, (int, float)) and x <= CURV_FEAS_THRESHOLD) else x)
+    else:
+        df['cv'] = np.where(df['feasible'], 0.0, np.nan)
     df['success'] = df['success'].fillna(False).astype(bool)
     return df
 

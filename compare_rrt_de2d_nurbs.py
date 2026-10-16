@@ -465,8 +465,44 @@ def run_rrt_star_smooth_ccdist_1_5(config, seed=None):
                 collision_free=col_free)
 
 
+def run_rrt_star_ccdist_3_0(config, seed=None):
+    return run_rrt(config, planner_type='rrt_star',
+                   extra_kw={'connect_circle_dist': 3.0, 'step_size': 0.10},
+                   seed=seed)
+
+
 def run_rrt_star_smooth_ccdist_2_5(config, seed=None):
     kw = dict(max_iter=3000, connect_circle_dist=2.5,
+              goal_sample_rate=20, search_until_max_iter=True,
+              step_size=0.10)
+    if seed is not None:
+        config.seed = seed
+    t0 = time.perf_counter()
+    p = RRTPlanner(config, 'rrt_star', **kw)
+    p.run(animation=False)
+    raw = p.get_best_path()
+    elapsed = time.perf_counter() - t0
+    if raw is None:
+        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
+                    length=np.nan, max_kappa=np.nan, collision_free=False)
+    raw_arr = np.asarray(raw)
+    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=20, s=0.015)
+    if smooth_arr is not None and len(smooth_arr) >= 2:
+        length = path_length(smooth_arr)
+        k_max = max_curvature_numerical(smooth_arr)
+        col_free = is_collision_free(smooth_arr, config.obs, config.radius)
+        return dict(path=smooth_arr, raw_path=raw_arr, elapsed=elapsed,
+                    success=True, length=length, max_kappa=k_max,
+                    collision_free=col_free)
+    length = path_length(raw_arr)
+    col_free = is_collision_free(raw_arr, config.obs, config.radius)
+    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
+                success=True, length=length, max_kappa=np.nan,
+                collision_free=col_free)
+
+
+def run_rrt_star_smooth_ccdist_3_0(config, seed=None):
+    kw = dict(max_iter=3000, connect_circle_dist=3.0,
               goal_sample_rate=20, search_until_max_iter=True,
               step_size=0.10)
     if seed is not None:
@@ -630,22 +666,25 @@ def run_pso2d_nurbs(config, seed=None):
 
 PLANNERS = [
     ('rrt_star',          run_rrt_star),
-    # ('rrt_star_smooth',   run_rrt_star_smooth),
-    # ('rrt_star_dubins',   run_rrt_star_dubins),
-    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
-    # ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
-    # ('rrt_star_asv',      run_rrt_star_asv),
-    # ('bit_star_dubins',   run_bit_star_dubins),
-    # # RRT* rewire-radius / step-size variants
+    ('rrt_star_smooth',   run_rrt_star_smooth),
+    ('rrt_star_dubins',   run_rrt_star_dubins),
+    ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
+    ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+    ('rrt_star_asv',      run_rrt_star_asv),
+    ('bit_star_dubins',   run_bit_star_dubins),
+    # RRT* rewire-radius / step-size variants
     ('rrt_star_ccdist_1_5',      run_rrt_star_ccdist_1_5),
     ('rrt_star_ccdist_2_5',      run_rrt_star_ccdist_2_5),
+    ('rrt_star_ccdist_3_0',      run_rrt_star_ccdist_3_0),
     ('rrt_star_smooth_ccdist_1_5', run_rrt_star_smooth_ccdist_1_5),
     ('rrt_star_smooth_ccdist_2_5', run_rrt_star_smooth_ccdist_2_5),
-    # # Dubins RRT* rewire-radius variants
-    # ('rrt_star_dubins_ccdist_3_5', run_rrt_star_dubins_ccdist_3_5),
-    # ('rrt_star_dubins_ccdist_6_0', run_rrt_star_dubins_ccdist_6_0),
+    ('rrt_star_smooth_ccdist_3_0', run_rrt_star_smooth_ccdist_3_0),
+    # Dubins RRT* rewire-radius variants
+    ('rrt_star_dubins_ccdist_3_5', run_rrt_star_dubins_ccdist_3_5),
+    ('rrt_star_dubins_ccdist_6_0', run_rrt_star_dubins_ccdist_6_0),
     ('de2d_nurbs',        run_de2d_nurbs),
-    # ('pso2d_nurbs',       run_pso2d_nurbs),
+    ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
 
 
@@ -693,7 +732,7 @@ def _run_single_task(sc, pname, runner_fn):
     # (e.g. Menger vs gradient).
     if pts is not None and len(np.asarray(pts)) >= 2:
         kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
-        kappa_respected = kappa_viol < 1e-6
+        kappa_respected = kappa_viol <= 1e-5
     else:
         kappa_viol = np.nan
         kappa_respected = False
@@ -717,8 +756,14 @@ def _run_single_task(sc, pname, runner_fn):
                 if np.any(pen > 0):
                     obs_viol += float(np.sum(pen ** 2))
 
-    feasible = (obs_viol < 1e-6) and kappa_respected and ws_viol < 0.5
-    cv_val = 0.0 if feasible else kappa_viol + ws_viol + obs_viol
+    collision_free = result.get('collision_free', False)
+    cv_val = kappa_viol + ws_viol + obs_viol
+    if np.isnan(cv_val):
+        cv_val = np.inf
+    feasible = collision_free and kappa_respected and ws_viol < 0.5 and (obs_viol < 1e-5) and (cv_val <= 1e-5)
+    if cv_val <= 1e-5:
+        cv_val = 0.0
+        feasible = collision_free and kappa_respected and ws_viol < 0.5 and (obs_viol < 1e-5)
 
     record = dict(
         scenario=label, seed=seed, planner=pname,
