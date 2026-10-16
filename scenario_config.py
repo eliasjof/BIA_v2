@@ -90,6 +90,8 @@ class ScenarioConfig:
         self.alpha_kappa = 0.5
         self.alpha_obs = 10.0
         self.alpha_workspace = 10.0
+        self.extended_start_goal = False
+        self.extended_start_goal_dist = None
         self._setup_done = False
 
     def setup(self):
