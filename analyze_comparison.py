@@ -25,6 +25,12 @@ PLANNER_STYLE = {
     'rrt_star_smooth_ccdist_1_5': dict(color="#009688", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 1.5'),
     'rrt_star_smooth_ccdist_2_5': dict(color="#4CAF50", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 2.5'),
     'rrt_star_smooth_ccdist_3_0': dict(color="#8F0D63", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 3.0'),
+    'rrt_star_expand_0_2': dict(color="#D32F2F", ls='--', lw=1.5, label='RRT* step 0.2'),
+    'rrt_star_expand_0_5': dict(color="#F57C00", ls='--', lw=1.5, label='RRT* step 0.5'),
+    'rrt_star_smooth_expand_0_2': dict(color="#AD1457", ls='-.', lw=1.5, label='RRT* + B-spline step 0.2'),
+    'rrt_star_smooth_expand_0_5': dict(color="#6A1B9A", ls='-.', lw=1.5, label='RRT* + B-spline step 0.5'),
+    'rrt_star_tuned': dict(color="#C62828", ls='--', lw=1.8, label='RRT* (tuned)'),
+    'rrt_star_smooth_tuned': dict(color="#00695C", ls='-.', lw=1.8, label='RRT* + B-spline (tuned)'),
     'rrt_star_dubins_ccdist_3_5': dict(color="#E91E63", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 3.5'),
     'rrt_star_dubins_ccdist_6_0': dict(color="#9C27B0", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 6.0'),
 }
@@ -45,6 +51,8 @@ SCENARIO_PREFIX = 'prog'
 SELECTED_PLANNERS = [
     'rrt_star',
     'rrt_star_smooth',
+    'rrt_star_tuned',
+    'rrt_star_smooth_tuned',
     'rrt_star_dubins',
     'rrt_dubins_smooth',
     'modified_dubins_rrt_star',
@@ -156,7 +164,7 @@ def extract_prog_group(scenario):
 def rank_within_seed(grp):
     n = len(grp)
     grp = grp.sort_values(
-        ['feasible', 'length', 'elapsed'],
+        ['feasible', 'length', 'time_s'],
         ascending=[False, True, True],
         na_position='last',
     )
@@ -278,10 +286,10 @@ def print_placement_overall(df):
 
 
 def print_time_stats(df):
-    print('  === TEMPO MEDIO POR ALGORITMO ===')
+    print('  === TEMPO MEDIO POR ALGORITMO (CPU time) ===')
     rows = []
     for planner, g in df.groupby('planner'):
-        elapsed = g['elapsed'].dropna()
+        elapsed = g['time_s'].dropna()
         rows.append(dict(
             planner=planner,
             count=len(elapsed),
@@ -352,11 +360,11 @@ def print_time_boxplot(df):
 
     data = []
     labels = []
-    medians = df.groupby('planner')['elapsed'].median().sort_values()
+    medians = df.groupby('planner')['time_s'].median().sort_values()
     order = medians.index.tolist()
 
     for planner in order:
-        vals = df.loc[df['planner'] == planner, 'elapsed'].dropna()
+        vals = df.loc[df['planner'] == planner, 'time_s'].dropna()
         if len(vals) == 0:
             continue
         q1 = vals.quantile(0.25)
@@ -384,7 +392,7 @@ def print_time_boxplot(df):
         for median_line in bp['medians']:
             median_line.set_color('black')
         ax.grid(axis='y', alpha=0.3)
-        ax.set_ylabel('Time (s)')
+        ax.set_ylabel('CPU time (s)')
 
     ax_bot.set_ylim(0, 16)
     ax_top.set_ylim(50, 270)
@@ -430,7 +438,7 @@ def print_latex_table(df):
         filtered = grp[(grp >= lo) & (grp <= hi)]
         return filtered.mean(), filtered.std()
 
-    time_stats = df.groupby('planner')['elapsed'].apply(lambda g: iqr_mean_std(g))
+    time_stats = df.groupby('planner')['time_s'].apply(lambda g: iqr_mean_std(g))
     avg_time = time_stats.apply(lambda x: x[0])
     std_time = time_stats.apply(lambda x: x[1])
 
@@ -497,6 +505,17 @@ def main():
 
     combined = pd.concat(all_dfs, ignore_index=True)
     combined['prog_group'] = combined['scenario'].apply(extract_prog_group)
+
+    # ── Time accounting ──────────────────────────────────────────────
+    # Prefer `cpu_time` (process CPU time, fair under joblib parallelism);
+    # fall back to `elapsed` for summaries generated before that column
+    # existed (where `elapsed` was wall-clock).
+    if 'cpu_time' in combined.columns and combined['cpu_time'].notna().any():
+        combined['time_s'] = combined['cpu_time'].fillna(combined['elapsed'])
+        print('  [time] usando cpu_time (fallback: elapsed)')
+    else:
+        combined['time_s'] = combined['elapsed']
+        print('  [time] cpu_time ausente; usando elapsed (wall-clock)')
 
     if SCENARIO_PREFIX:
         before = len(combined)

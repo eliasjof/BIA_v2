@@ -1,12 +1,26 @@
+import os
+import json
 import pickle, time, copy, gc, sys
 from pathlib import Path
+
+SAFE_N_JOBS = 4
+
+# Prevent BLAS/OpenMP oversubscription when running many joblib workers
+# (e.g. n_jobs=21 on 32 cores).  Without this each worker may spawn its own
+# BLAS threads -> N_workers * N_threads threads, which destroys both the
+# wall-clock and the fairness of the timing.  Must be set before numpy import.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 
 from scenario_config import ScenarioConfig
-from rrt_based.rrt_planner_modified import RRTPlanner, angle_mod, ModifiedDubinsRRTStar, RRTStarASV
+from rrt_based.rrt_planner_modified import (
+    RRTPlanner, angle_mod, ModifiedDubinsRRTStar, RRTStarASV,
+    extend_path_start_goal, _extended_start_goal_dist)
 from rrt_based.ccpoa import CCPOA
 from de2d_nurbs import DE2D_NURBS
 try:
@@ -47,7 +61,8 @@ def max_curvature_numerical(path):
     b_len = np.hypot(bx, by)
     c_len = np.hypot(cx, cy)
     denom = a_len * b_len * c_len
-    k = np.where(denom > 1e-12, 2.0 * cross / denom, 0.0)
+    k = np.zeros_like(denom)
+    np.divide(2.0 * cross, denom, out=k, where=denom > 1e-12)
     return float(k.max())
 
 
@@ -66,6 +81,18 @@ def check_collision_path(path, obstacle_list, robot_radius):
     return is_collision_free(path, obstacle_list, robot_radius)
 
 
+def apply_extended_start_goal(path, config, step_size=0.05):
+    if path is None or not getattr(config, 'extended_start_goal', False):
+        return path
+    return extend_path_start_goal(
+        path,
+        (float(config.start[0]), float(config.start[1])),
+        (float(config.goal[0]), float(config.goal[1])),
+        float(config.th_start), float(config.th_goal),
+        _extended_start_goal_dist(config),
+        step_size=step_size)
+
+
 def _numerical_curvature_violation(pts, kappa_max):
     a = np.asarray(pts)
     dx = np.gradient(a[:, 0])
@@ -80,15 +107,23 @@ def _numerical_curvature_violation(pts, kappa_max):
 # Planner runners
 # ──────────────────────────────────────────────
 
+# Extension step (the "steer") for the non-Dubins RRT* variants.  This is
+# `expand_dis` in RRTStar; `step_size` is only meaningful for Dubins/ASV.
+RRT_EXPAND_DIS = 0.3
+
+
 def run_rrt(config, planner_type='rrt_star', extra_kw=None, seed=None):
     kw = dict(
-        max_iter=3000, connect_circle_dist=2.0,
+        max_iter=2000, connect_circle_dist=2.0,
         goal_sample_rate=20, search_until_max_iter=True,
     )
     if extra_kw:
         kw.update(extra_kw)
     if seed is not None:
         config.seed = seed
+    # Non-Dubins RRT* variants: always use extended start/goal so the
+    # trajectory reaches start / leaves goal with the desired headings.
+    config.extended_start_goal = True
 
     t0 = time.perf_counter()
     p = RRTPlanner(config, planner_type, **kw)
@@ -115,7 +150,7 @@ def run_rrt_star(config, seed=None):
 
 
 def run_rrt_star_dubins(config, seed=None):
-    kw = dict(max_iter=3000, connect_circle_dist=4.5,
+    kw = dict(max_iter=2000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
@@ -162,7 +197,7 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0):
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=3000,
+        goal_sample_rate=20, max_iter=2000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
@@ -176,6 +211,7 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0):
         return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
                     length=np.nan, max_kappa=np.nan, collision_free=False)
 
+    raw = apply_extended_start_goal(raw, config)
     raw_arr = np.asarray(raw)
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
@@ -206,7 +242,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=20, max_iter=3000,
+        goal_sample_rate=20, max_iter=2000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
@@ -233,8 +269,9 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
     nodes_path.reverse()
 
     if len(nodes_path) < 2:
-        return dict(path=np.asarray(raw), raw_path=raw, elapsed=mdr_elapsed,
-                    success=True, length=path_length(raw),
+        raw_ext = apply_extended_start_goal(raw, config)
+        return dict(path=np.asarray(raw_ext), raw_path=raw, elapsed=mdr_elapsed,
+                    success=True, length=path_length(raw_ext),
                     max_kappa=np.nan, collision_free=False)
 
     waypoints = np.array([[n.x, n.y] for n in nodes_path])
@@ -245,6 +282,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
         waypoints, config.th_start, config.th_goal)
     total_elapsed = time.perf_counter() - t0
 
+    opt_path = apply_extended_start_goal(opt_path, config)
     opt_arr = np.asarray(opt_path)
     length = path_length(opt_arr)
     col_free = is_collision_free(opt_arr, config.obs, config.radius)
@@ -275,7 +313,7 @@ def run_rrt_star_asv(config, seed=None, cost_a=1.20, cost_b=1.5):
         rand_area=[config.xmin, config.xmax],
         rand_area_x=[config.xmin, config.xmax],
         rand_area_y=[config.ymin, config.ymax],
-        goal_sample_rate=30, max_iter=3000,
+        goal_sample_rate=30, max_iter=2000,
         connect_circle_dist=4.5,
         robot_radius=config.radius,
         step_size=0.05,
@@ -288,6 +326,7 @@ def run_rrt_star_asv(config, seed=None, cost_a=1.20, cost_b=1.5):
         return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
                     length=np.nan, max_kappa=np.nan, collision_free=False)
 
+    raw = apply_extended_start_goal(raw, config)
     raw_arr = np.asarray(raw)
     length = path_length(raw_arr)
     col_free = is_collision_free(raw_arr, config.obs, config.radius)
@@ -297,24 +336,33 @@ def run_rrt_star_asv(config, seed=None, cost_a=1.20, cost_b=1.5):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def smooth_path_rrt(planner, raw_path, n_waypoints=15, s=0.08):
+def smooth_path_rrt(planner, raw_path, n_waypoints=15, s=0.08, n_points=250):
+    # n_points: resolution of the evaluated B-spline curve.  These are the
+    # points on which collision checking and curvature are computed, so a
+    # smaller value speeds up the post-processing (e.g. 500 -> 250).
     if raw_path is None or len(raw_path) < 4:
         return None
     # Temporarily set _path so smooth_path() works
     planner._path = raw_path.tolist() if hasattr(raw_path, 'tolist') else list(raw_path)
     try:
-        smooth = planner.smooth_path(n_waypoints=n_waypoints, s=s)
+        smooth = planner.smooth_path(n_waypoints=n_waypoints, s=s,
+                                     n_points=n_points)
         return np.asarray(smooth) if smooth is not None else None
     except Exception:
         return None
 
 
-def run_rrt_star_smooth(config, seed=None, n_waypoints=15, s=0.08):
-    kw = dict(max_iter=3000, connect_circle_dist=2.0,
-              goal_sample_rate=20, search_until_max_iter=True,
-              step_size=0.10)
+def _run_rrt_star_smooth_kw(config, kw, seed=None, n_waypoints=15, s=0.08):
+    """Generic smooth RRT* runner: plan with `kw`, then B-spline smooth.
+
+    The start/goal extension is applied to the raw path *before* smoothing
+    (via `config.extended_start_goal`): attaching the straight tangent stubs
+    after smoothing would create a kink at the start/goal (since the B-spline
+    tangent there differs from the stub direction) and inflate the curvature.
+    """
     if seed is not None:
         config.seed = seed
+    config.extended_start_goal = True
 
     t0 = time.perf_counter()
     p = RRTPlanner(config, 'rrt_star', **kw)
@@ -331,17 +379,30 @@ def run_rrt_star_smooth(config, seed=None, n_waypoints=15, s=0.08):
     result = dict(raw_path=raw_arr, elapsed=elapsed)
 
     if smooth_arr is not None and len(smooth_arr) >= 2:
-        length = path_length(smooth_arr)
-        k_max = max_curvature_numerical(smooth_arr)
-        col_free = is_collision_free(smooth_arr, config.obs, config.radius)
         result.update(path=smooth_arr, success=True,
-                      length=length, max_kappa=k_max, collision_free=col_free)
+                      length=path_length(smooth_arr),
+                      max_kappa=max_curvature_numerical(smooth_arr),
+                      collision_free=is_collision_free(smooth_arr, config.obs,
+                                                       config.radius))
     else:
         result.update(path=raw_arr, success=True,
                       length=path_length(raw_arr),
                       max_kappa=max_curvature_numerical(raw_arr),
-                      collision_free=is_collision_free(raw_arr, config.obs, config.radius))
+                      collision_free=is_collision_free(raw_arr, config.obs,
+                                                       config.radius))
     return result
+
+
+def _smooth_kw(**overrides):
+    kw = dict(max_iter=2000, connect_circle_dist=2.0,
+              goal_sample_rate=20, search_until_max_iter=True,
+              expand_dis=RRT_EXPAND_DIS)
+    kw.update(overrides)
+    return kw
+
+
+def run_rrt_star_smooth(config, seed=None, n_waypoints=15, s=0.08):
+    return _run_rrt_star_smooth_kw(config, _smooth_kw(), seed, n_waypoints, s)
 
 
 def run_rrt_dubins_smooth(config, seed=None, n_waypoints=15, s=0.08):
@@ -388,7 +449,7 @@ def run_rrt_dubins_smooth(config, seed=None, n_waypoints=15, s=0.08):
 
 
 def run_bit_star_dubins(config, seed=None):
-    kw = dict(max_iter=3000, connect_circle_dist=4.5,
+    kw = dict(max_iter=2000, connect_circle_dist=4.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True,
@@ -420,122 +481,121 @@ def run_bit_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-# ---- RRT* variants with different rewire radius and step size ----
+# ---- RRT* variants: rewire radius (ccdist) and steer step (expand_dis) ----
+# NOTE: for non-Dubins RRT* the extension step is `expand_dis` (used by
+# `steer`), NOT `step_size` (that name only exists for the Dubins/ASV
+# planners).  `RRT_EXPAND_DIS` keeps the steer step equal to the base
+# rrt_star so that the ccdist variants isolate the rewire-radius effect.
+def _rrt_star_kw(**overrides):
+    kw = dict(expand_dis=RRT_EXPAND_DIS, connect_circle_dist=2.0,
+              max_iter=3000, goal_sample_rate=20,
+              search_until_max_iter=True)
+    kw.update(overrides)
+    return kw
+
+
 def run_rrt_star_ccdist_1_5(config, seed=None):
     return run_rrt(config, planner_type='rrt_star',
-                   extra_kw={'connect_circle_dist': 1.5, 'step_size': 0.10},
+                   extra_kw=_rrt_star_kw(connect_circle_dist=1.5),
                    seed=seed)
 
 
 def run_rrt_star_ccdist_2_5(config, seed=None):
     return run_rrt(config, planner_type='rrt_star',
-                   extra_kw={'connect_circle_dist': 2.5, 'step_size': 0.10},
+                   extra_kw=_rrt_star_kw(connect_circle_dist=2.5),
                    seed=seed)
-
-
-def run_rrt_star_smooth_ccdist_1_5(config, seed=None):
-    # reuse smooth runner but with altered RRT* parameters
-    kw = dict(max_iter=3000, connect_circle_dist=1.5,
-              goal_sample_rate=20, search_until_max_iter=True,
-              step_size=0.10)
-    if seed is not None:
-        config.seed = seed
-    t0 = time.perf_counter()
-    p = RRTPlanner(config, 'rrt_star', **kw)
-    p.run(animation=False)
-    raw = p.get_best_path()
-    elapsed = time.perf_counter() - t0
-    if raw is None:
-        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
-                    length=np.nan, max_kappa=np.nan, collision_free=False)
-    raw_arr = np.asarray(raw)
-    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=15, s=0.08)
-    if smooth_arr is not None and len(smooth_arr) >= 2:
-        length = path_length(smooth_arr)
-        k_max = max_curvature_numerical(smooth_arr)
-        col_free = is_collision_free(smooth_arr, config.obs, config.radius)
-        return dict(path=smooth_arr, raw_path=raw_arr, elapsed=elapsed,
-                    success=True, length=length, max_kappa=k_max,
-                    collision_free=col_free)
-    length = path_length(raw_arr)
-    col_free = is_collision_free(raw_arr, config.obs, config.radius)
-    k_max_raw = max_curvature_numerical(raw_arr)
-    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
-                success=True, length=length, max_kappa=k_max_raw,
-                collision_free=col_free)
 
 
 def run_rrt_star_ccdist_3_0(config, seed=None):
     return run_rrt(config, planner_type='rrt_star',
-                   extra_kw={'connect_circle_dist': 3.0, 'step_size': 0.10},
+                   extra_kw=_rrt_star_kw(connect_circle_dist=3.0),
                    seed=seed)
 
 
+def run_rrt_star_expand_0_2(config, seed=None):
+    return run_rrt(config, planner_type='rrt_star',
+                   extra_kw=_rrt_star_kw(expand_dis=0.2),
+                   seed=seed)
+
+
+def run_rrt_star_expand_0_5(config, seed=None):
+    return run_rrt(config, planner_type='rrt_star',
+                   extra_kw=_rrt_star_kw(expand_dis=0.5),
+                   seed=seed)
+
+
+def run_rrt_star_smooth_ccdist_1_5(config, seed=None):
+    return _run_rrt_star_smooth_kw(
+        config, _smooth_kw(connect_circle_dist=1.5), seed)
+
+
 def run_rrt_star_smooth_ccdist_2_5(config, seed=None):
-    kw = dict(max_iter=3000, connect_circle_dist=2.5,
-              goal_sample_rate=20, search_until_max_iter=True,
-              step_size=0.10)
-    if seed is not None:
-        config.seed = seed
-    t0 = time.perf_counter()
-    p = RRTPlanner(config, 'rrt_star', **kw)
-    p.run(animation=False)
-    raw = p.get_best_path()
-    elapsed = time.perf_counter() - t0
-    if raw is None:
-        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
-                    length=np.nan, max_kappa=np.nan, collision_free=False)
-    raw_arr = np.asarray(raw)
-    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=15, s=0.08)
-    if smooth_arr is not None and len(smooth_arr) >= 2:
-        length = path_length(smooth_arr)
-        k_max = max_curvature_numerical(smooth_arr)
-        col_free = is_collision_free(smooth_arr, config.obs, config.radius)
-        return dict(path=smooth_arr, raw_path=raw_arr, elapsed=elapsed,
-                    success=True, length=length, max_kappa=k_max,
-                    collision_free=col_free)
-    length = path_length(raw_arr)
-    col_free = is_collision_free(raw_arr, config.obs, config.radius)
-    k_max_raw = max_curvature_numerical(raw_arr)
-    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
-                success=True, length=length, max_kappa=k_max_raw,
-                collision_free=col_free)
+    return _run_rrt_star_smooth_kw(
+        config, _smooth_kw(connect_circle_dist=2.5), seed)
 
 
 def run_rrt_star_smooth_ccdist_3_0(config, seed=None):
-    kw = dict(max_iter=3000, connect_circle_dist=3.0,
-              goal_sample_rate=20, search_until_max_iter=True,
-              step_size=0.10)
-    if seed is not None:
-        config.seed = seed
-    t0 = time.perf_counter()
-    p = RRTPlanner(config, 'rrt_star', **kw)
-    p.run(animation=False)
-    raw = p.get_best_path()
-    elapsed = time.perf_counter() - t0
-    if raw is None:
-        return dict(path=None, raw_path=None, elapsed=elapsed, success=False,
-                    length=np.nan, max_kappa=np.nan, collision_free=False)
-    raw_arr = np.asarray(raw)
-    smooth_arr = smooth_path_rrt(p, raw_arr, n_waypoints=15, s=0.08)
-    if smooth_arr is not None and len(smooth_arr) >= 2:
-        length = path_length(smooth_arr)
-        k_max = max_curvature_numerical(smooth_arr)
-        col_free = is_collision_free(smooth_arr, config.obs, config.radius)
-        return dict(path=smooth_arr, raw_path=raw_arr, elapsed=elapsed,
-                    success=True, length=length, max_kappa=k_max,
-                    collision_free=col_free)
-    length = path_length(raw_arr)
-    col_free = is_collision_free(raw_arr, config.obs, config.radius)
-    k_max_raw = max_curvature_numerical(raw_arr)
-    return dict(path=raw_arr, raw_path=raw_arr, elapsed=elapsed,
-                success=True, length=length, max_kappa=k_max_raw,
-                collision_free=col_free)
+    return _run_rrt_star_smooth_kw(
+        config, _smooth_kw(connect_circle_dist=3.0), seed)
+
+
+def run_rrt_star_smooth_expand_0_2(config, seed=None):
+    return _run_rrt_star_smooth_kw(
+        config, _smooth_kw(expand_dis=0.2), seed)
+
+
+def run_rrt_star_smooth_expand_0_5(config, seed=None):
+    return _run_rrt_star_smooth_kw(
+        config, _smooth_kw(expand_dis=0.5), seed)
+
+
+# ---- Tuned variants (grid search via tune_rrt_star.py) ----
+# The winning ("recommended") configuration of each variant is read from
+# rrt_tuning/best_params.json, produced by tune_rrt_star.py (Friedman +
+# Nemenyi / paired-Wilcoxon over the ccdist x expand x max_iter grid).  If
+# that file is missing, the hard-coded fallbacks below are used.
+_TUNING_JSON = Path(__file__).parent / 'rrt_tuning' / 'best_params.json'
+
+
+def _load_recommended(variant, fallback):
+    """Return (ccdist, expand_dis, max_iter) for a variant.
+
+    Reads the 'recommended' entry of rrt_tuning/best_params.json; falls back
+    to `fallback` if the file/entry is missing.
+    """
+    try:
+        data = json.loads(_TUNING_JSON.read_text())
+        rec = data[variant]['recommended']
+        return (float(rec['connect_circle_dist']),
+                float(rec['expand_dis']),
+                int(rec['max_iter']))
+    except Exception as exc:  # missing/partial file -> keep working
+        print(f'[tuned] using fallback for {variant} ({exc})')
+        return fallback
+
+
+RRT_STAR_TUNED = _load_recommended('rrt_star', (3.0, 0.1, 2000))
+RRT_STAR_SMOOTH_TUNED = _load_recommended('rrt_star_smooth', (1.0, 0.1, 500))
+
+
+def run_rrt_star_tuned(config, seed=None):
+    cc, ed, mi = RRT_STAR_TUNED
+    return run_rrt(config, planner_type='rrt_star',
+                   extra_kw=_rrt_star_kw(connect_circle_dist=cc,
+                                         expand_dis=ed, max_iter=mi),
+                   seed=seed)
+
+
+def run_rrt_star_smooth_tuned(config, seed=None):
+    cc, ed, mi = RRT_STAR_SMOOTH_TUNED
+    return _run_rrt_star_smooth_kw(
+        config, _smooth_kw(connect_circle_dist=cc, expand_dis=ed,
+                           max_iter=mi), seed)
 
 
 # ---- Dubins RRT* variants with different rewire radius ----
 def run_rrt_star_dubins_ccdist_3_5(config, seed=None):
-    kw = dict(max_iter=3000, connect_circle_dist=3.5,
+    kw = dict(max_iter=2000, connect_circle_dist=3.5,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
@@ -562,7 +622,7 @@ def run_rrt_star_dubins_ccdist_3_5(config, seed=None):
 
 
 def run_rrt_star_dubins_ccdist_6_0(config, seed=None):
-    kw = dict(max_iter=3000, connect_circle_dist=6.0,
+    kw = dict(max_iter=2000, connect_circle_dist=6.0,
               goal_sample_rate=20, path_resolution=0.05,
               random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
@@ -631,7 +691,7 @@ def run_pso2d_nurbs(config, seed=None):
         config.seed = seed
 
     t0 = time.perf_counter()
-    config.n_generations = 450
+    config.n_generations = 400
     config.pop_size = 50
     config.alpha_obs = 1000
     config.alpha_kappa = 10.00
@@ -666,28 +726,59 @@ def run_pso2d_nurbs(config, seed=None):
 # Scenario generation helpers
 # ──────────────────────────────────────────────
 
+
 PLANNERS = [
+    # Non-Dubins RRT* variants (all run with extended_start_goal = True)
     ('rrt_star',          run_rrt_star),
     ('rrt_star_smooth',   run_rrt_star_smooth),
-    ('rrt_star_dubins',   run_rrt_star_dubins),
-    ('rrt_dubins_smooth', run_rrt_dubins_smooth),
-    ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
-    ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
-    ('rrt_star_asv',      run_rrt_star_asv),
-    ('bit_star_dubins',   run_bit_star_dubins),
-    # RRT* rewire-radius / step-size variants
     ('rrt_star_ccdist_1_5',      run_rrt_star_ccdist_1_5),
     ('rrt_star_ccdist_2_5',      run_rrt_star_ccdist_2_5),
     ('rrt_star_ccdist_3_0',      run_rrt_star_ccdist_3_0),
     ('rrt_star_smooth_ccdist_1_5', run_rrt_star_smooth_ccdist_1_5),
     ('rrt_star_smooth_ccdist_2_5', run_rrt_star_smooth_ccdist_2_5),
     ('rrt_star_smooth_ccdist_3_0', run_rrt_star_smooth_ccdist_3_0),
-    # Dubins RRT* rewire-radius variants
-    ('rrt_star_dubins_ccdist_3_5', run_rrt_star_dubins_ccdist_3_5),
-    ('rrt_star_dubins_ccdist_6_0', run_rrt_star_dubins_ccdist_6_0),
+    # steer-step (expand_dis) sweep; base rrt_star uses 0.3
+    ('rrt_star_expand_0_2',        run_rrt_star_expand_0_2),
+    ('rrt_star_expand_0_5',        run_rrt_star_expand_0_5),
+    ('rrt_star_smooth_expand_0_2', run_rrt_star_smooth_expand_0_2),
+    ('rrt_star_smooth_expand_0_5', run_rrt_star_smooth_expand_0_5),
+    # tuned configurations (see tune_rrt_star.py / rrt_tuning/best_params.json)
+    ('rrt_star_tuned',        run_rrt_star_tuned),
+    ('rrt_star_smooth_tuned', run_rrt_star_smooth_tuned),
+    # Dubins RRT* variants (extended_start_goal left OFF)
+    # ('rrt_star_dubins',   run_rrt_star_dubins),
+    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+    # ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
+    # ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+    # ('rrt_star_asv',      run_rrt_star_asv),
+    # ('bit_star_dubins',   run_bit_star_dubins),
+    # ('rrt_star_dubins_ccdist_3_5', run_rrt_star_dubins_ccdist_3_5),
+    # ('rrt_star_dubins_ccdist_6_0', run_rrt_star_dubins_ccdist_6_0),
     ('de2d_nurbs',        run_de2d_nurbs),
-    ('pso2d_nurbs',       run_pso2d_nurbs),
+    # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
+# PLANNERS = [
+#     ('rrt_star',          run_rrt_star),
+#     ('rrt_star_smooth',   run_rrt_star_smooth),
+#     ('rrt_star_dubins',   run_rrt_star_dubins),
+#     ('rrt_dubins_smooth', run_rrt_dubins_smooth),
+#     ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
+#     ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
+#     ('rrt_star_asv',      run_rrt_star_asv),
+#     ('bit_star_dubins',   run_bit_star_dubins),
+#     # RRT* rewire-radius / step-size variants
+#     ('rrt_star_ccdist_1_5',      run_rrt_star_ccdist_1_5),
+#     ('rrt_star_ccdist_2_5',      run_rrt_star_ccdist_2_5),
+#     ('rrt_star_ccdist_3_0',      run_rrt_star_ccdist_3_0),
+#     ('rrt_star_smooth_ccdist_1_5', run_rrt_star_smooth_ccdist_1_5),
+#     ('rrt_star_smooth_ccdist_2_5', run_rrt_star_smooth_ccdist_2_5),
+#     ('rrt_star_smooth_ccdist_3_0', run_rrt_star_smooth_ccdist_3_0),
+#     # Dubins RRT* rewire-radius variants
+#     ('rrt_star_dubins_ccdist_3_5', run_rrt_star_dubins_ccdist_3_5),
+#     ('rrt_star_dubins_ccdist_6_0', run_rrt_star_dubins_ccdist_6_0),
+#     ('de2d_nurbs',        run_de2d_nurbs),
+#     ('pso2d_nurbs',       run_pso2d_nurbs),
+# ]
 
 
 def _run_single_task(sc, pname, runner_fn):
@@ -702,21 +793,31 @@ def _run_single_task(sc, pname, runner_fn):
         th_goal=sc.get('th_goal', 0.0),
         radius=sc.get('radius', 0.073),
         kappa_max=sc.get('kappa_max', 1/0.73),
-        n_generations=sc.get('n_generations', 450),
+        n_generations=sc.get('n_generations', 400),
         pop_size=sc.get('pop_size', 100),
-        nsampling=sc.get('nsampling', 200),
+        nsampling=sc.get('nsampling', 120),
     )
     c.setup()
 
-    t_start = time.perf_counter()
+    # Measure both wall-clock and CPU time of the runner.  Under joblib
+    # parallelism the wall-clock is inflated by CPU contention (unfair
+    # between planners); CPU time (process time) reflects the actual work
+    # and is the fair metric for comparing planners.
+    wall0 = time.perf_counter()
+    cpu0 = time.process_time()
     try:
         result = runner_fn(c, seed=seed)
     except Exception:
         result = dict(path=None, raw_path=None, success=False,
                       length=np.nan, max_kappa=np.nan,
                       collision_free=False)
-    total_time = time.perf_counter() - t_start
+    wall_time = time.perf_counter() - wall0
+    cpu_time = time.process_time() - cpu0
+    total_time = wall_time
     result.setdefault('elapsed', total_time)
+    # Fair, contention-insensitive time used for cross-planner comparison.
+    result.setdefault('cpu_time', cpu_time)
+    result.setdefault('wall_time', wall_time)
     result.setdefault('success', False)
     result.setdefault('length', np.nan)
     result.setdefault('max_kappa', np.nan)
@@ -772,7 +873,11 @@ def _run_single_task(sc, pname, runner_fn):
         success=result['success'],
         length=result.get('length', np.nan),
         max_kappa=result.get('max_kappa', np.nan),
-        elapsed=result.get('elapsed', total_time),
+        # `elapsed` = CPU time (fair under joblib parallelism).
+        # `wall_time` keeps the (contention-inflated) wall-clock for reference.
+        elapsed=result.get('cpu_time', result.get('elapsed', total_time)),
+        cpu_time=result.get('cpu_time', np.nan),
+        wall_time=result.get('wall_time', total_time),
         collision_free=result.get('collision_free', False),
         cv=cv_val,
         cv_opt=cv_opt,
@@ -805,7 +910,7 @@ def _run_single_task(sc, pname, runner_fn):
 
 def make_scenario(seed, obs_list=None, start=None, goal=None,
                   th_start=0.0, th_goal=0.0, radius=0.073, kappa_max=1/0.73,
-                  n_generations=450, pop_size=100, nsampling=120):
+                  n_generations=400, pop_size=100, nsampling=120):
     config = ScenarioConfig()
     config.seed = seed
     config.radius = radius
@@ -948,15 +1053,29 @@ def run_comparison(scenario_configs, planners=PLANNERS,
             results.append((rec, pkey, parr, lbl, oarr))
             if verbose:
                 ok = 'OK' if rec['success'] else 'FAIL'
-                print(f'{ok}  len={rec["length"]:.2f}m  t={rec["elapsed"]:.1f}s'
+                print(f'{ok}  len={rec["length"]:.2f}m  '
+                      f'cpu={rec["cpu_time"]:.2f}s  wall={rec["wall_time"]:.2f}s'
                       f'  col={"" if rec["collision_free"] else "COL!"}')
     else:
         n_jobs = min(n_jobs, len(task_list))
+        if n_jobs > SAFE_N_JOBS:
+            print(f'  [WARNING] n_jobs={n_jobs} > {SAFE_N_JOBS}: memory/cache '
+                  f'contention inflates the per-task time (up to ~2x at '
+                  f'n_jobs=21). Use -j {SAFE_N_JOBS} (or -j 1) for fair timing.')
         if verbose:
             print(f'Running {len(task_list)} tasks on {n_jobs} workers ...')
-        results = Parallel(n_jobs=n_jobs, verbose=10)(
+        # loky (processes): the per-task CPU time is measured with
+        # time.process_time() inside _run_single_task.  NOTE: this removes the
+        # multithreading effect but NOT memory-bandwidth contention, so keep
+        # n_jobs moderate (see SAFE_N_JOBS) for comparable timings.
+        results = Parallel(n_jobs=n_jobs, backend='loky', verbose=10)(
             delayed(_run_single_task)(*args) for args in task_list
         )
+        if verbose:
+            df_tmp = pd.DataFrame([r[0] for r in results])
+            print('\nCPU time (s) mean per planner:')
+            print(df_tmp.groupby('planner')['cpu_time'].mean()
+                  .sort_values().to_string())
 
     all_records = []
     paths_store = {}
@@ -1049,15 +1168,18 @@ def print_summary(df):
     for name, g in grp:
         feas_mask = g['feasible']
         feasible_len = g.loc[feas_mask, 'length']
-        rows.append(dict(
+        row = dict(
             planner=name,
             success_rate=g['success'].mean(),
             feasible_rate=feas_mask.mean(),
             avg_length=g['length'].mean(),
             avg_length_fea=feasible_len.mean() if len(feasible_len) else np.nan,
             avg_cv=g['cv'].mean(),
-            avg_time=g['elapsed'].mean(),
-        ))
+            avg_cpu_time=g['elapsed'].mean(),   # elapsed == CPU time
+        )
+        if 'wall_time' in g.columns:
+            row['avg_wall_time'] = g['wall_time'].mean()
+        rows.append(row)
     agg = pd.DataFrame(rows).set_index('planner').round(3)
     agg = agg.sort_values(['feasible_rate', 'avg_length'], ascending=[False, True])
     print(agg.to_string())
@@ -1080,14 +1202,14 @@ def main():
       python compare_rrt_de2d_nurbs.py -j 4        # 4 workers
       python compare_rrt_de2d_nurbs.py -j -1       # all cores
     """
-    n_jobs = 21
+    n_jobs = 4
     argv = sys.argv[1:]
     if argv and argv[0] == '-j' and len(argv) > 1:
         n_jobs = int(argv[1])
     elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
         n_jobs = int(argv[0][2:])
 
-    seeds = list(range(21)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(1)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles

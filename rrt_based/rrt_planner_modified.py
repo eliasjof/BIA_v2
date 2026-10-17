@@ -45,6 +45,60 @@ def angle_mod(x, zero_2_2pi=False, degree=False):
 
 
 # ═══════════════════════════════════════════════════════════════
+# 1b. EXTENDED START / GOAL
+# ═══════════════════════════════════════════════════════════════
+
+def extend_path_start_goal(path, start, goal, th_start, th_goal, dist,
+                           step_size=0.05):
+    """Acrescenta trechos retos tangentes ao caminho do RRT.
+
+    Cria um ponto fictício de início ``S_ext`` **à frente** do ``start``
+    (no sentido ``+th_start``) e um ponto fictício de fim ``G_ext`` **atrás**
+    do ``goal`` (no sentido ``-th_goal``).  O caminho retornado inicia em
+    ``S_ext``, passa reto por ``start`` e termina em ``G_ext``.
+
+    A posição usa ``cos/sin`` do ângulo desejado, portanto funciona nos
+    quatro quadrantes trigonométricos (0, 90, 180, 270°, ...).
+
+    Assume que ``path`` já começa em ``start`` e termina em ``goal``
+    (o corpo é invertido automaticamente se vier na ordem goal->start).
+    """
+    if path is None or len(path) == 0 or dist <= 0:
+        return path
+
+    s_ext = (start[0] + dist * math.cos(th_start),
+             start[1] + dist * math.sin(th_start))
+    g_ext = (goal[0] - dist * math.cos(th_goal),
+             goal[1] - dist * math.sin(th_goal))
+
+    def _seg(a, b):
+        n = max(1, int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1])
+                                 / step_size)))
+        return [[a[0] + (b[0] - a[0]) * k / n,
+                 a[1] + (b[1] - a[1]) * k / n] for k in range(n + 1)]
+
+    head = _seg(s_ext, (start[0], start[1]))   # S_ext -> start
+    tail = _seg((goal[0], goal[1]), g_ext)     # goal -> G_ext
+    body = [list(pt) for pt in path]
+    # Some planners (e.g. plain RRT*) return the path in goal->start order.
+    # Normalise it to start->goal so the tangent segments attach correctly.
+    if len(body) >= 1:
+        d_start = math.hypot(body[0][0] - start[0], body[0][1] - start[1])
+        d_goal = math.hypot(body[0][0] - goal[0], body[0][1] - goal[1])
+        if d_goal < d_start:
+            body = body[::-1]
+    # head termina em `start` (= body[0]); tail começa em `goal` (= body[-1])
+    return head[:-1] + body + tail[1:]
+
+
+def _extended_start_goal_dist(config):
+    dist = getattr(config, 'extended_start_goal_dist', None)
+    if dist is None:
+        dist = 2.0 * config.radius
+    return dist
+
+
+# ═══════════════════════════════════════════════════════════════
 # 2. DUBINS PATH PLANNER
 # ═══════════════════════════════════════════════════════════════
 
@@ -1879,6 +1933,14 @@ class RRTPlanner:
             )
 
         path = self.planner.planning(animation=animation)
+        if getattr(c, 'extended_start_goal', False) and path is not None:
+            path = extend_path_start_goal(
+                path,
+                (float(c.start[0]), float(c.start[1])),
+                (float(c.goal[0]), float(c.goal[1])),
+                float(c.th_start), float(c.th_goal),
+                _extended_start_goal_dist(c),
+                step_size=p.get('path_resolution', 0.05))
         self._path = path
         self._extract_best_nodes()
         return self.planner
@@ -1957,14 +2019,41 @@ class RRTPlanner:
         if self._path is None:
             return None
         from scipy.interpolate import splprep, splev
-        full = np.array(self._path)
+        full = np.asarray(self._path, dtype=float)
+        if full.ndim != 2 or len(full) < 2:
+            return None
+
+        # Remove consecutive duplicate points: splprep raises
+        # "Invalid inputs" when two consecutive waypoints coincide, which
+        # used to make callers silently fall back to the raw (unsmoothed)
+        # RRT path.
+        keep = np.concatenate(
+            ([True], np.any(np.abs(np.diff(full, axis=0)) > 0, axis=1)))
+        full = full[keep]
+        if len(full) < 2:
+            return None
+
+        # Downsample by arc length (not by index) so corners, which live in
+        # sparse regions, are represented evenly.
         if len(full) > n_waypoints:
-            indices = np.linspace(0, len(full) - 1, n_waypoints, dtype=int)
-            wx = list(full[indices, 0])
-            wy = list(full[indices, 1])
+            seg = np.linalg.norm(np.diff(full, axis=0), axis=1)
+            s_arc = np.concatenate(([0.0], np.cumsum(seg)))
+            if s_arc[-1] > 0:
+                targets = np.linspace(0.0, s_arc[-1], n_waypoints)
+                idx = np.clip(np.searchsorted(s_arc, targets),
+                              0, len(full) - 1)
+                idx[0], idx[-1] = 0, len(full) - 1
+                idx = np.unique(idx)
+            else:
+                idx = np.arange(len(full))
+            wx = list(full[idx, 0])
+            wy = list(full[idx, 1])
         else:
             wx = list(full[:, 0])
             wy = list(full[:, 1])
+
+        if len(wx) < 2:
+            return None
         w = np.ones(len(wx))
         w[0] = 10000.0
         w[-1] = 10000.0

@@ -55,10 +55,16 @@ PLANNER_STYLE = {
     'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),
     'rrt_star_ccdist_1_5': dict(color="#3F51B5", ls='--', lw=1.5, label='RRT* CCDIST 1.5'),
     'rrt_star_ccdist_2_5': dict(color="#673AB7", ls='--', lw=1.5, label='RRT* CCDIST 2.5'),
-    'rrt_star_ccdist_3_0': dict(color="#585086", ls='dashdot', lw=1.5, label='RRT* CCDIST 3.0'),
+    'rrt_star_ccdist_3_0': dict(color="#1F1941", ls='dashdot', lw=1.5, label='RRT* CCDIST 3.0'),
     'rrt_star_smooth_ccdist_1_5': dict(color="#009688", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 1.5'),
     'rrt_star_smooth_ccdist_2_5': dict(color="#4CAF50", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 2.5'),
     'rrt_star_smooth_ccdist_3_0': dict(color="#8F0D63", ls='-.', lw=1.5, label='RRT* + B-spline CCDIST 3.0'),
+    'rrt_star_expand_0_2': dict(color="#D32F2F", ls='--', lw=1.5, label='RRT* step 0.2'),
+    'rrt_star_expand_0_5': dict(color="#F57C00", ls='--', lw=1.5, label='RRT* step 0.5'),
+    'rrt_star_smooth_expand_0_2': dict(color="#AD1457", ls='-.', lw=1.5, label='RRT* + B-spline step 0.2'),
+    'rrt_star_smooth_expand_0_5': dict(color="#6A1B9A", ls='-.', lw=1.5, label='RRT* + B-spline step 0.5'),
+    'rrt_star_tuned': dict(color="#C62828", ls='--', lw=1.8, label='RRT* (tuned)'),
+    'rrt_star_smooth_tuned': dict(color="#00695C", ls='-.', lw=1.8, label='RRT* + B-spline (tuned)'),
     'rrt_star_dubins_ccdist_3_5': dict(color="#E91E63", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 3.5'),
     'rrt_star_dubins_ccdist_6_0': dict(color="#9C27B0", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 6.0'),
 }
@@ -379,19 +385,24 @@ if __name__ == '__main__':
     # Lista de planners para plotar (comente/descomente os que desejar)
     planners = args.planners if args.planners is not None else [
         'rrt_star',
-        # 'rrt_star_smooth',
-        # 'rrt_star_dubins',
-        # 'rrt_dubins_smooth',
-        # 'modified_dubins_rrt_star',
-        # 'modified_dubins_rrt_star_ccpoa',
-        # 'bit_star_dubins',
-        # 'bit_star_theta',
-        # 'rrt_star_smooth_ccdist_3_0',
+        'rrt_star_smooth',
+        # steer-step (expand_dis) sweep
+        'rrt_star_expand_0_2',
+        'rrt_star_expand_0_5',
+        'rrt_star_smooth_expand_0_2',
+        'rrt_star_smooth_expand_0_5',
+        # tuned configurations (see tune_rrt_star.py)
+        'rrt_star_tuned',
+        'rrt_star_smooth_tuned',
+        # rewire-radius (ccdist) sweep
+        'rrt_star_ccdist_1_5',
+        'rrt_star_ccdist_2_5',
         'rrt_star_ccdist_3_0',
+        'rrt_star_smooth_ccdist_1_5',
+        'rrt_star_smooth_ccdist_2_5',
         'rrt_star_smooth_ccdist_3_0',
         'de2d_nurbs',
         'pso2d_nurbs',
-        # 'rrt_star_asv',
     ]
 
     plot_all(results_dir=f'comparison_results_paper/{args.exp}',
