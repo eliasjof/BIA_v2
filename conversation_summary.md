@@ -271,9 +271,154 @@ Onde estava definida a densidade de pontos (usada em **colisão** e
   preciso incluí-las em `SELECTED_PLANNERS` (hoje ele filtra por essa lista e
   não contém nem as `ccdist`).
 
---- 
+### 6.9 Sweep do grid completo (substitui as variantes *tuned*)
+**Objetivo:** em vez de rodar apenas a configuração *recomendada* (tuned) de
+cada variante, testar **todas as combinações** do grid
+(`ccdist × expand_dis × max_iter`) lado a lado.
+
+**`compare_rrt_de2d_nurbs.py` — alterações:**
+- Novas constantes de grid (mesmos valores de `tune_rrt_star.py`):
+  ```python
+  SWEEP_CCDIST  = [1.0, 2.0, 3.0]
+  SWEEP_EXPAND  = [0.1, 0.2, 0.3, 0.4]
+  SWEEP_MAXITER = [500, 1000, 2000, 4000]   # 8000 removido para encurtar o grid
+  ```
+- Novas factories que encapsulam `run_rrt` / `_run_rrt_star_smooth_kw` com um
+  parâmetro fixo do grid:
+  - `_make_rrt_star_grid_runner(ccdist, expand_dis, max_iter)`
+  - `_make_rrt_star_smooth_grid_runner(ccdist, expand_dis, max_iter)`
+  - `_grid_name(variant, ccdist, expand_dis, max_iter)` →
+    `"{variant}_cc{cc}_ed{ed}_mi{mi}"` (ex.: `rrt_star_cc1.0_ed0.1_mi500`).
+- `build_grid_planners()` gera a lista de pares `(nome, runner)` e
+  `GRID_PLANNERS` materializa tudo no import.
+- Em `PLANNERS`, as duas entradas `rrt_star_tuned` / `rrt_star_smooth_tuned`
+  foram substituídas por `*GRID_PLANNERS`.
+- **Total:** 3 × 4 × 4 = 48 configs por variante × 2 variantes = **96 planners**
+  (as funções `run_rrt_star_tuned` / `run_rrt_star_smooth_tuned` continuam
+  definidas, mas não são mais usadas na lista).
+
+**Custo esperado:** no experimento `progressive` (10 cenários, `max_obs=9`) →
+**960 tasks**. Rodar com `python compare_rrt_de2d_nurbs.py -j 4` (ou `-j 1`
+para tempos justos; ver §6.5).
+
+**Como restringir/expandir:** basta editar `SWEEP_CCDIST`, `SWEEP_EXPAND` e/ou
+`SWEEP_MAXITER` (ex.: re-adicionar `8000`).
+
+**Nota:** os nomes novos (`rrt_star_cc..._ed..._mi...`) ainda **não** estão
+registrados em `PLANNER_STYLE` de `plot_comparison.py` / `analyze_comparison.py`
+nem em `SELECTED_PLANNERS`; para plotar/analisar todas as variantes é preciso
+tratá-las lá (ex.: agrupar por prefixo `rrt_star` / `rrt_star_smooth`).
+
+### 6.10 Sweep de parâmetros das variantes Dubins (exceto `bit_star_dubins`)
+**Objetivo:** variar os parâmetros que de fato definem cada família Dubins,
+substituindo as entradas comentadas em `PLANNERS` por um grid.
+
+**Parâmetros por família (descobertos no código):**
+- `RRTStarDubins` (`rrt_planner_modified.py:666`) honra
+  `random_yaw_strategy` em `planning` (`:702-708`) → `uniform` vs `toward_goal`.
+- `ModifiedDubinsRRTStar` (`:939`) tem `eta1` (Algorithm 9 / `ModifiedSample`) e
+  `safety_radius_factor` (Theorem 1). O runner em `compare` passava
+  `safety_radius_factor=0.0` (**desliga** o *safety margin*; default da classe = 2.0).
+- `RRTStarASV` (`:1191`) tem pesos de custo de giro `cost_a`, `cost_b`.
+
+**`compare_rrt_de2d_nurbs.py` — alterações:**
+- Refatoração (sem mudar comportamento default):
+  - `_dubins_kw(**overrides)` + `_run_dubins_raw_kw(...)`;
+    `run_rrt_star_dubins` virou wrapper.
+  - `_run_dubins_smooth_kw(config, kw, seed, n_waypoints, s)`;
+    `run_rrt_dubins_smooth` virou wrapper.
+  - `run_modified_dubins_rrt_star` e `..._ccpoa` passaram a aceitar `eta1=0.3`
+    (antes fixo 0.3) além de `safety_radius_factor`.
+- Novas constantes de grid:
+  ```python
+  SWEEP_DUBINS_CCDIST = [3.5, 4.5, 6.0]
+  SWEEP_DUBINS_YAW    = ['uniform', 'toward_goal']
+  SWEEP_MDR_ETA1      = [0.1, 0.3, 0.5]
+  SWEEP_MDR_SAFETY    = [0.0, 1.0, 2.0]
+  SWEEP_ASV_COST_A    = [1.0, 1.2]
+  SWEEP_ASV_COST_B    = [1.0, 1.5, 2.0]
+  ```
+- Factories: `_make_dubins_grid_runner(ccdist, yaw, smooth)`,
+  `_make_mdr_grid_runner(eta1, safety, ccpoa)`,
+  `_make_asv_grid_runner(cost_a, cost_b)`; agregadas em
+  `build_dubins_grid_planners()` / `DUBINS_GRID_PLANNERS`.
+- Nomes: `rrt_star_dubins_cc{cc}_yaw{yaw}`, `rrt_dubins_smooth_cc{cc}_yaw{yaw}`,
+  `modified_dubins_rrt_star_eta{e}_safe{sf}` (+ sufixo `_ccpoa`),
+  `rrt_star_asv_ca{ca}_cb{cb}`.
+- Em `PLANNERS`, o bloco Dubins comentado foi substituído por
+  `*DUBINS_GRID_PLANNERS`.
+
+**Total:** RRT*Dubins `2×(3×2)=12` + MDR/CCPOA `2×(3×3)=18` + ASV `2×3=6` =
+**36 planners Dubins**. Somando aos 96 não-Dubins + `de2d_nurbs` →
+**`PLANNERS` com 145 entradas** (verificado importando o módulo).
+
+**Verificação:** `len(GRID_PLANNERS)=96`, `len(DUBINS_GRID_PLANNERS)=36`,
+`len(PLANNERS)=145`; nomes gerados conferidos.
+
+**Nota:** mesma ressalva de `PLANNER_STYLE` / `SELECTED_PLANNERS` do §6.9.
+
+### 6.11 Checkpoint periódico + retomada (proteção contra queda de energia)
+**Problema:** antes, os resultados só eram gravados por `save_results`, chamado
+**após** `run_comparison` terminar. Um desligamento no meio perdia todo o
+progresso e obrigava a recomeçar do zero.
+
+**Solução (`compare_rrt_de2d_nurbs.py`):**
+- Constantes no topo: `CHECKPOINT_SAVE_EVERY = 20` e `CHECKPOINT_NAME =
+  'checkpoint.pkl'`.
+- Helpers:
+  - `_result_key(res)` → `(scenario, planner)` de um resultado.
+  - `_save_checkpoint(output_dir, results)` → grava em `checkpoint.pkl.tmp`,
+    `f.flush()` + `os.fsync()`, e depois `os.replace()` (**escrita atômica**,
+    então uma queda durante a gravação não corrompe o arquivo).
+  - `_load_checkpoint(output_dir)` → carrega se existir (tolerante a arquivo
+    corrompido).
+- `run_comparison` ganhou os parâmetros `checkpoint=True`,
+  `save_every=CHECKPOINT_SAVE_EVERY`, `resume=True`:
+  - No início, se `resume`, carrega o checkpoint, monta o conjunto
+    `done = {_result_key(...)}` e **filtra** `task_list`, rodando só as tarefas
+    que faltam (imprime `resuming: N already done, M remaining`).
+  - A cada `save_every` resultados novos, grava o checkpoint (`_flush`).
+  - **Paralelo:** passa a usar `Parallel(..., return_as=...)` para receber os
+    resultados **conforme terminam** e gravar checkpoints incrementalmente.
+    Escolha adaptativa: tenta `'generator_unordered'` (joblib ≥ 1.4), cai para
+    `'generator'` (joblib ≥ 1.3; aqui é o 1.3.2) e, se nenhum existir, faz um
+    *batch* único. `except (TypeError, ValueError)` cobre a rejeição do parâmetro.
+    Se a iteração do gerador for interrompida, o checkpoint é gravado antes de
+    propagar a exceção.
+  - Checkpoint final garantido com `_flush(force=True)`.
+- `main`: parsing manual de `-j`, `--fresh` (ignora/recomeça o checkpoint),
+  `--no-checkpoint` e `--save-every N`; repassa tudo a `run_comparison`.
+  O `checkpoint.pkl` fica em `comparison_results_paper/<exp>/`.
+- **Perda máxima em caso de queda:** as tarefas concluídas mas ainda não
+  gravadas — no pior caso `save_every + n_workers` tarefas.
+
+**Verificação:** teste com runners falsos rápidos, `save_every=1`, 2 cenários ×
+2 planners: (1) grava 1→4/4 incrementalmente; (2) reexecutar com `-j 2` mostra
+`resuming: 4 task(s) already done, 0 remaining` e devolve os 4 registros sem
+recalcular.
+
+**Uso:**
+```
+python compare_rrt_de2d_nurbs.py -j 4                 # retoma automaticamente
+python compare_rrt_de2d_nurbs.py -j 4 --save-every 5  # salva mais frequente
+python compare_rrt_de2d_nurbs.py --fresh              # recomeça do zero
+python compare_rrt_de2d_nurbs.py --no-checkpoint      # desliga checkpoint
+```
+
+
+---
+
+## 7. Resposta ao revisor (movida)
+
+A resposta ao revisor (em inglês) foi movida para **`response_to_reviewer.md`**,
+com uma versão **sintética** (Part A) e uma **completa** (Part B), incluindo o
+significado de cada variável testada em cada algoritmo.
+
+---
 
 *Atualizado na sessão de 2026‑10‑16 (extended_start_goal, correções de
 curvatura/suavização, medição de tempo sob joblib, redução da densidade de
-pontos de colisão/curvatura, correção do parâmetro de passo do RRT* e sweep de
-`expand_dis`).*
+pontos de colisão/curvatura, correção do parâmetro de passo do RRT*, sweep de
+`expand_dis`, sweep do grid completo em substituição às variantes tuned, sweep
+de parâmetros das variantes Dubins, checkpoint periódico com retomada e resposta
+ao revisor em `response_to_reviewer.md`).*

@@ -5,6 +5,11 @@ from pathlib import Path
 
 SAFE_N_JOBS = 4
 
+# Number of completed tasks between periodic checkpoint writes.  Lower = safer
+# against power loss but more I/O.  Overridable via --save-every.
+CHECKPOINT_SAVE_EVERY = 20
+CHECKPOINT_NAME = 'checkpoint.pkl'
+
 # Prevent BLAS/OpenMP oversubscription when running many joblib workers
 # (e.g. n_jobs=21 on 32 cores).  Without this each worker may spawn its own
 # BLAS threads -> N_workers * N_threads threads, which destroys both the
@@ -149,11 +154,15 @@ def run_rrt_star(config, seed=None):
     return run_rrt(config, planner_type='rrt_star', seed=seed)
 
 
-def run_rrt_star_dubins(config, seed=None):
-    kw = dict(max_iter=2000, connect_circle_dist=4.5,
-              goal_sample_rate=20, path_resolution=0.05,
-              random_yaw_strategy='toward_goal',
+def _dubins_kw(**overrides):
+    kw = dict(max_iter=2000, connect_circle_dist=4.5, goal_sample_rate=20,
+              path_resolution=0.05, random_yaw_strategy='toward_goal',
               search_until_max_iter=True)
+    kw.update(overrides)
+    return kw
+
+
+def _run_dubins_raw_kw(config, kw, seed=None):
     if seed is not None:
         config.seed = seed
 
@@ -181,7 +190,12 @@ def run_rrt_star_dubins(config, seed=None):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0):
+def run_rrt_star_dubins(config, seed=None):
+    return _run_dubins_raw_kw(config, _dubins_kw(), seed)
+
+
+def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0,
+                                 eta1=0.3):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -202,7 +216,7 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0):
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        eta1=0.3,
+        eta1=eta1,
         safety_radius_factor=safety_radius_factor)
     raw = planner.planning(animation=False, search_until_max_iter=True)
     elapsed = time.perf_counter() - t0
@@ -226,7 +240,8 @@ def run_modified_dubins_rrt_star(config, seed=None, safety_radius_factor=0.0):
                 length=length, max_kappa=max_k, collision_free=col_free)
 
 
-def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0.0):
+def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0.0,
+                                       eta1=0.3):
     if seed is not None:
         config.seed = seed
     config.setup()
@@ -247,7 +262,7 @@ def run_modified_dubins_rrt_star_ccpoa(config, seed=None, safety_radius_factor=0
         robot_radius=config.radius,
         step_size=0.05,
         curvature=config.kappa_max,
-        eta1=0.3,
+        eta1=eta1,
         safety_radius_factor=safety_radius_factor)
     raw = planner.planning(animation=False, search_until_max_iter=True)
     mdr_elapsed = time.perf_counter() - t0
@@ -406,10 +421,10 @@ def run_rrt_star_smooth(config, seed=None, n_waypoints=15, s=0.08):
 
 
 def run_rrt_dubins_smooth(config, seed=None, n_waypoints=15, s=0.08):
-    kw = dict(max_iter=2000, connect_circle_dist=4.5,
-              goal_sample_rate=20, path_resolution=0.05,
-              random_yaw_strategy='toward_goal',
-              search_until_max_iter=True)
+    return _run_dubins_smooth_kw(config, _dubins_kw(), seed, n_waypoints, s)
+
+
+def _run_dubins_smooth_kw(config, kw, seed=None, n_waypoints=15, s=0.08):
     if seed is not None:
         config.seed = seed
 
@@ -593,6 +608,126 @@ def run_rrt_star_smooth_tuned(config, seed=None):
                            max_iter=mi), seed)
 
 
+# ---- Full parameter-grid sweep ----
+# Instead of benchmarking only the single tuned ("recommended") config per
+# variant, this enumerates the *whole* grid used by tune_rrt_star.py
+# (ccdist x expand_dis x max_iter) for both variants, so every combination is
+# run side by side.  Adjust the SWEEP_* lists below to restrict the grid.
+SWEEP_CCDIST = [1.0, 2.0, 3.0]
+SWEEP_EXPAND = [0.1, 0.2, 0.3, 0.4]
+SWEEP_MAXITER = [500, 1000, 2000, 4000]
+
+
+def _make_rrt_star_grid_runner(ccdist, expand_dis, max_iter):
+    def _runner(config, seed=None):
+        return run_rrt(config, planner_type='rrt_star',
+                       extra_kw=_rrt_star_kw(connect_circle_dist=ccdist,
+                                             expand_dis=expand_dis,
+                                             max_iter=max_iter),
+                       seed=seed)
+    return _runner
+
+
+def _make_rrt_star_smooth_grid_runner(ccdist, expand_dis, max_iter):
+    def _runner(config, seed=None):
+        return _run_rrt_star_smooth_kw(
+            config, _smooth_kw(connect_circle_dist=ccdist,
+                               expand_dis=expand_dis,
+                               max_iter=max_iter), seed)
+    return _runner
+
+
+def _grid_name(variant, ccdist, expand_dis, max_iter):
+    return f'{variant}_cc{ccdist}_ed{expand_dis}_mi{max_iter}'
+
+
+def build_grid_planners():
+    """All (name, runner) pairs for the full ccdist x expand x max_iter grid."""
+    planners = []
+    for cc in SWEEP_CCDIST:
+        for ed in SWEEP_EXPAND:
+            for mi in SWEEP_MAXITER:
+                planners.append((
+                    _grid_name('rrt_star', cc, ed, mi),
+                    _make_rrt_star_grid_runner(cc, ed, mi)))
+                planners.append((
+                    _grid_name('rrt_star_smooth', cc, ed, mi),
+                    _make_rrt_star_smooth_grid_runner(cc, ed, mi)))
+    return planners
+
+
+GRID_PLANNERS = build_grid_planners()
+
+
+# ---- Dubins parameter-grid sweep ----
+# Excludes bit_star_dubins.  Sweeps the parameters that actually matter for
+# each Dubins family:
+#   * RRT*Dubins (raw / smooth): rewire radius (ccdist) x random_yaw_strategy
+#   * ModifiedDubinsRRTStar (: + CCPOA): eta1 (ModifiedSample) x safety factor
+#   * RRT*ASV: turning-cost weights (cost_a, cost_b)
+SWEEP_DUBINS_CCDIST = [3.5, 4.5, 6.0]
+SWEEP_DUBINS_YAW = ['uniform', 'toward_goal']
+SWEEP_MDR_ETA1 = [0.1, 0.3, 0.5]
+SWEEP_MDR_SAFETY = [0.0, 1.0, 2.0]
+SWEEP_ASV_COST_A = [1.0, 1.2]
+SWEEP_ASV_COST_B = [1.0, 1.5, 2.0]
+
+
+def _make_dubins_grid_runner(ccdist, yaw, smooth):
+    def _runner(config, seed=None):
+        kw = _dubins_kw(connect_circle_dist=ccdist,
+                        random_yaw_strategy=yaw)
+        if smooth:
+            return _run_dubins_smooth_kw(config, kw, seed)
+        return _run_dubins_raw_kw(config, kw, seed)
+    return _runner
+
+
+def _make_mdr_grid_runner(eta1, safety, ccpoa):
+    fn = (run_modified_dubins_rrt_star_ccpoa if ccpoa
+          else run_modified_dubins_rrt_star)
+
+    def _runner(config, seed=None):
+        return fn(config, seed=seed, safety_radius_factor=safety, eta1=eta1)
+    return _runner
+
+
+def _make_asv_grid_runner(cost_a, cost_b):
+    def _runner(config, seed=None):
+        return run_rrt_star_asv(config, seed=seed, cost_a=cost_a, cost_b=cost_b)
+    return _runner
+
+
+def build_dubins_grid_planners():
+    """All (name, runner) pairs for the Dubins parameter grid (no bit_star)."""
+    planners = []
+    for cc in SWEEP_DUBINS_CCDIST:
+        for yaw in SWEEP_DUBINS_YAW:
+            planners.append((
+                f'rrt_star_dubins_cc{cc}_yaw{yaw}',
+                _make_dubins_grid_runner(cc, yaw, smooth=False)))
+            planners.append((
+                f'rrt_dubins_smooth_cc{cc}_yaw{yaw}',
+                _make_dubins_grid_runner(cc, yaw, smooth=True)))
+    for e in SWEEP_MDR_ETA1:
+        for sf in SWEEP_MDR_SAFETY:
+            planners.append((
+                f'modified_dubins_rrt_star_eta{e}_safe{sf}',
+                _make_mdr_grid_runner(e, sf, ccpoa=False)))
+            planners.append((
+                f'modified_dubins_rrt_star_ccpoa_eta{e}_safe{sf}',
+                _make_mdr_grid_runner(e, sf, ccpoa=True)))
+    for ca in SWEEP_ASV_COST_A:
+        for cb in SWEEP_ASV_COST_B:
+            planners.append((
+                f'rrt_star_asv_ca{ca}_cb{cb}',
+                _make_asv_grid_runner(ca, cb)))
+    return planners
+
+
+DUBINS_GRID_PLANNERS = build_dubins_grid_planners()
+
+
 # ---- Dubins RRT* variants with different rewire radius ----
 def run_rrt_star_dubins_ccdist_3_5(config, seed=None):
     kw = dict(max_iter=2000, connect_circle_dist=3.5,
@@ -742,18 +877,12 @@ PLANNERS = [
     ('rrt_star_expand_0_5',        run_rrt_star_expand_0_5),
     ('rrt_star_smooth_expand_0_2', run_rrt_star_smooth_expand_0_2),
     ('rrt_star_smooth_expand_0_5', run_rrt_star_smooth_expand_0_5),
-    # tuned configurations (see tune_rrt_star.py / rrt_tuning/best_params.json)
-    ('rrt_star_tuned',        run_rrt_star_tuned),
-    ('rrt_star_smooth_tuned', run_rrt_star_smooth_tuned),
-    # Dubins RRT* variants (extended_start_goal left OFF)
-    # ('rrt_star_dubins',   run_rrt_star_dubins),
-    # ('rrt_dubins_smooth', run_rrt_dubins_smooth),
-    # ('modified_dubins_rrt_star', run_modified_dubins_rrt_star),
-    # ('modified_dubins_rrt_star_ccpoa', run_modified_dubins_rrt_star_ccpoa),
-    # ('rrt_star_asv',      run_rrt_star_asv),
-    # ('bit_star_dubins',   run_bit_star_dubins),
-    # ('rrt_star_dubins_ccdist_3_5', run_rrt_star_dubins_ccdist_3_5),
-    # ('rrt_star_dubins_ccdist_6_0', run_rrt_star_dubins_ccdist_6_0),
+    # full parameter-grid sweep: every ccdist x expand_dis x max_iter combo
+    # for rrt_star and rrt_star_smooth (see build_grid_planners below)
+    *GRID_PLANNERS,
+    # Dubins parameter-grid sweep (bit_star_dubins excluded):
+    #   RRT*Dubins: ccdist x yaw | MDR/MDR+CCPOA: eta1 x safety | ASV: cost_a x cost_b
+    *DUBINS_GRID_PLANNERS,
     ('de2d_nurbs',        run_de2d_nurbs),
     # ('pso2d_nurbs',       run_pso2d_nurbs),
 ]
@@ -1032,50 +1161,156 @@ def scenarios_random_count(seeds, counts, label_prefix='rand'):
 # Main comparison loop
 # ──────────────────────────────────────────────
 
+def _result_key(res):
+    """Unique (scenario, planner) key of a result tuple for resume/de-dup."""
+    rec = res[0]
+    return (rec.get('scenario'), rec.get('planner'))
+
+
+def _checkpoint_file(output_dir):
+    return Path(output_dir) / CHECKPOINT_NAME
+
+
+def _save_checkpoint(output_dir, results):
+    """Atomically dump partial results.
+
+    Written to a temp file and then `os.replace`d, so a crash/power loss
+    during the write cannot leave a truncated/corrupt checkpoint.
+    """
+    path = _checkpoint_file(output_dir)
+    tmp = path.with_name(path.name + '.tmp')
+    try:
+        with open(tmp, 'wb') as f:
+            pickle.dump(results, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception as exc:
+        print(f'  [checkpoint] WARNING: could not save {path}: {exc}')
+
+
+def _load_checkpoint(output_dir):
+    path = _checkpoint_file(output_dir)
+    if not path.exists():
+        return []
+    try:
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    except Exception as exc:
+        print(f'  [checkpoint] WARNING: could not load {path}: {exc}')
+        return []
+
+
 def run_comparison(scenario_configs, planners=PLANNERS,
-                   output_dir='comparison_results', verbose=True, n_jobs=1):
+                   output_dir='comparison_results', verbose=True, n_jobs=1,
+                   checkpoint=True, save_every=CHECKPOINT_SAVE_EVERY,
+                   resume=True):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     task_list = [(sc, pname, runner_fn)
                  for sc in scenario_configs
                  for pname, runner_fn in planners]
+    total = len(task_list)
+
+    # Resume: keep every result already stored in the checkpoint and only run
+    # the tasks that are still missing.
+    results = []
+    done = set()
+    if checkpoint and resume:
+        results = _load_checkpoint(output_dir)
+        done = {_result_key(r) for r in results}
+        if done:
+            print(f'  [checkpoint] resuming: {len(done)} task(s) already done, '
+                  f'{total - len(done)} remaining (from {_checkpoint_file(output_dir)}).')
+
+    remaining = [
+        args for args in task_list
+        if (args[0].get('label', f'seed{args[0]["seed"]}'), args[1]) not in done
+    ]
+    n_saved = len(results)
+
+    def _flush(force=False):
+        """Write a checkpoint if `save_every` new results accumulated."""
+        nonlocal n_saved
+        if not checkpoint:
+            return
+        if force or (len(results) - n_saved) >= save_every:
+            _save_checkpoint(output_dir, results)
+            n_saved = len(results)
+            if verbose:
+                print(f'  [checkpoint] {len(results)}/{total} tasks saved to '
+                      f'{_checkpoint_file(output_dir)}')
 
     if n_jobs == 1:
-        results = []
-        n_tasks = len(task_list)
-        for idx, args in enumerate(task_list):
+        n_rem = len(remaining)
+        for idx, args in enumerate(remaining):
             if verbose:
                 sc = args[0]
                 label = sc.get('label', f'seed{sc["seed"]}')
-                print(f'[{idx+1}/{n_tasks}] {args[1]:20s}  {label}', end=' ', flush=True)
-            rec, pkey, parr, lbl, oarr = _run_single_task(*args)
-            results.append((rec, pkey, parr, lbl, oarr))
+                print(f'[{len(results)+1}/{total}] {args[1]:20s}  {label}',
+                      end=' ', flush=True)
+            res = _run_single_task(*args)
+            results.append(res)
             if verbose:
+                rec = res[0]
                 ok = 'OK' if rec['success'] else 'FAIL'
                 print(f'{ok}  len={rec["length"]:.2f}m  '
                       f'cpu={rec["cpu_time"]:.2f}s  wall={rec["wall_time"]:.2f}s'
                       f'  col={"" if rec["collision_free"] else "COL!"}')
+            _flush()
     else:
-        n_jobs = min(n_jobs, len(task_list))
-        if n_jobs > SAFE_N_JOBS:
-            print(f'  [WARNING] n_jobs={n_jobs} > {SAFE_N_JOBS}: memory/cache '
+        n_workers = min(n_jobs, len(remaining)) if remaining else 0
+        if n_workers > SAFE_N_JOBS:
+            print(f'  [WARNING] n_jobs={n_workers} > {SAFE_N_JOBS}: memory/cache '
                   f'contention inflates the per-task time (up to ~2x at '
                   f'n_jobs=21). Use -j {SAFE_N_JOBS} (or -j 1) for fair timing.')
         if verbose:
-            print(f'Running {len(task_list)} tasks on {n_jobs} workers ...')
-        # loky (processes): the per-task CPU time is measured with
-        # time.process_time() inside _run_single_task.  NOTE: this removes the
-        # multithreading effect but NOT memory-bandwidth contention, so keep
-        # n_jobs moderate (see SAFE_N_JOBS) for comparable timings.
-        results = Parallel(n_jobs=n_jobs, backend='loky', verbose=10)(
-            delayed(_run_single_task)(*args) for args in task_list
-        )
-        if verbose:
+            print(f'Running {len(remaining)} tasks on {n_workers} workers '
+                  f'({total - len(remaining)} already done) ...')
+        if remaining:
+            # loky (processes): the per-task CPU time is measured with
+            # time.process_time() inside _run_single_task.  NOTE: this removes
+            # the multithreading effect but NOT memory-bandwidth contention, so
+            # keep n_jobs moderate (see SAFE_N_JOBS) for comparable timings.
+            # Prefer `return_as='generator_unordered'` (joblib >= 1.4) so
+            # results are yielded as they finish and checkpoints can be written
+            # incrementally without waiting for a slow task.  Fall back to the
+            # ordered generator (joblib >= 1.3) and finally to a single batch.
+            result_iter = None
+            for mode in ('generator_unordered', 'generator'):
+                try:
+                    result_iter = Parallel(n_jobs=n_workers, backend='loky',
+                                           verbose=10, return_as=mode)(
+                        delayed(_run_single_task)(*args) for args in remaining)
+                    break
+                except (TypeError, ValueError):
+                    result_iter = None
+            if result_iter is not None:
+                try:
+                    for res in result_iter:
+                        results.append(res)
+                        _flush()
+                except Exception as exc:
+                    _flush(force=True)
+                    print(f'  [checkpoint] parallel run interrupted: {exc}. '
+                          f'{len(results)}/{total} results checkpointed; '
+                          f're-run to resume.')
+                    raise
+            else:
+                # joblib too old for generators: single batch (no incremental
+                # checkpoints during the parallel phase).
+                batch = Parallel(n_jobs=n_workers, backend='loky', verbose=10)(
+                    delayed(_run_single_task)(*args) for args in remaining)
+                results.extend(batch)
+                _flush(force=True)
+        if verbose and results:
             df_tmp = pd.DataFrame([r[0] for r in results])
             print('\nCPU time (s) mean per planner:')
             print(df_tmp.groupby('planner')['cpu_time'].mean()
                   .sort_values().to_string())
+
+    _flush(force=True)
 
     all_records = []
     paths_store = {}
@@ -1201,15 +1436,37 @@ def main():
       python compare_rrt_de2d_nurbs.py             # sequential
       python compare_rrt_de2d_nurbs.py -j 4        # 4 workers
       python compare_rrt_de2d_nurbs.py -j -1       # all cores
+      python compare_rrt_de2d_nurbs.py --save-every 5   # checkpoint every 5 tasks
+      python compare_rrt_de2d_nurbs.py --fresh     # ignore/restart checkpoint
+      python compare_rrt_de2d_nurbs.py --no-checkpoint
+
+    Progress is checkpointed to ``<output_dir>/checkpoint.pkl`` every
+    ``--save-every`` tasks (default 20) and resumed automatically on the next
+    run, so an interruption (e.g. power loss) does not restart from scratch.
+    Use ``--fresh`` to start over, or delete that file.
     """
     n_jobs = 4
+    checkpoint = True
+    resume = True
+    save_every = CHECKPOINT_SAVE_EVERY
     argv = sys.argv[1:]
-    if argv and argv[0] == '-j' and len(argv) > 1:
-        n_jobs = int(argv[1])
-    elif argv and argv[0].startswith('-j') and len(argv[0]) > 2:
-        n_jobs = int(argv[0][2:])
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '-j' and i + 1 < len(argv):
+            n_jobs = int(argv[i + 1]); i += 2
+        elif a.startswith('-j') and len(a) > 2:
+            n_jobs = int(a[2:]); i += 1
+        elif a == '--fresh':
+            resume = False; i += 1
+        elif a == '--no-checkpoint':
+            checkpoint = False; i += 1
+        elif a == '--save-every' and i + 1 < len(argv):
+            save_every = int(argv[i + 1]); i += 2
+        else:
+            i += 1
 
-    seeds = list(range(1)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(30)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles
@@ -1247,6 +1504,7 @@ def main():
         out_dir = f'comparison_results_paper/{exp_name}'
         df, ps, obs_store = run_comparison(
             scenario_list, output_dir=out_dir, n_jobs=n_jobs,
+            checkpoint=checkpoint, save_every=save_every, resume=resume,
         )
         save_results(df, ps, obs_store, output_dir=out_dir)
         print_summary(df)
