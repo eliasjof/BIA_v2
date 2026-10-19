@@ -408,11 +408,151 @@ python compare_rrt_de2d_nurbs.py --no-checkpoint      # desliga checkpoint
 
 ---
 
+### 6.12 Correção do critério de factibilidade de curvatura + recomputação offline
+
+**Problema encontrado:** no run do paper
+(`comparison_results_paper/progressive`) a factibilidade dos planejadores com
+curvatura (Dubins/MDR/ASV) saía ~0 %, embora o Dubins respeite a curvatura
+(`max_kappa = κ_max`). Causa: o `_numerical_curvature_violation` usava
+`np.gradient` com **espaçamento de índice** e mantinha **pontos duplicados**;
+caminhos Dubins têm vértices repetidos nas junções reta/arco e amostragem
+não-uniforme, gerando picos espúrios de curvatura.
+
+**Comparação de estimadores** (factibilidade de curvatura, ignorando
+obstáculos), por variante representativa:
+
+| variante | índice (antigo) | arco (dedupe) | reamostragem | **Menger** |
+|---|---|---|---|---|
+| `rrt_star` (cru) | 0.00 | 0.18 | 0.00 | 0.02 |
+| `rrt_star_dubins` | 0.00 | 0.52 | 0.00 | 0.96 |
+| `rrt_star_smooth` | 0.36 | 0.35 | 0.36 | 0.35 |
+| `rrt_dubins_smooth` | 0.27 | 0.27 | 0.27 | 0.27 |
+| `modified_dubins_rrt_star` | 0.00 | 0.36 | 0.00 | 1.00 |
+| `rrt_star_asv` | 0.00 | 0.25 | 0.00 | 1.00 |
+| `de2d_nurbs` | 0.85 | 0.84 | 0.05 | 0.44 |
+
+**Decisão (escolhida pelo usuário):** usar o **Menger**
+(`max_curvature_numerical`) com **tolerância relativa de 5 %**
+(`KAPPA_REL_TOL`). O Menger é exato para arcos e separa corretamente os C1
+(Dubins/ASV/MDR ≈ 1.0) do RRT* cru (≈ 0); os 5 % absorvem o erro de
+discretização (sem tolerância o DE2D cai para 0.44; com 5 % vai a 0.99).
+
+**Mudanças em `compare_rrt_de2d_nurbs.py`:**
+- Novo `curvature_metrics(pts, kappa_max, tol=KAPPA_REL_TOL)` (Menger + tol).
+- `posthoc_metrics` e `is_feasible` centralizam a regra pós-hoc (run novo e
+  recomputação usam a mesma função).
+- `max_curvature_numerical` agora aceita ≥3 pontos.
+- `_numerical_curvature_violation` mantido apenas como referência.
+
+**Recomputação offline (sem reexecutar as 14500 tarefas):** novo
+`recompute_feasibility.py` reconstrói `cv`/`feasible` a partir de `paths.pkl` +
+`obstacles.pkl` + `config.pkl` (todos indexados por `progXX_seedY`). Original
+preservado em `summary_pre_cvfix.pkl`. Uso:
+```
+python recompute_feasibility.py comparison_results_paper/progressive
+python recompute_feasibility.py <exp_dir> --dry-run
+```
+Factibilidade global do run: 3.2 % → **14.1 %**.
+
+**`analyze_comparison.py` (reorganizado nesta sessão):**
+- `RESULTS_ROOT` = `comparison_results_paper` (via `--root`).
+- `main` reordenado: `ensure_feasible` → `prog_group` → `time_s` → prefixo →
+  `select_best_grid_configs` → `filter_planners` → análises → heatmaps.
+- `select_best_grid_configs`: escolhe a melhor config de cada variante por
+  rank médio com **zona de equivalência Nemenyi** (prefere mais factível, menor
+  comprimento, menor curvatura, mais rápida) — alinhado ao `tune_rrt_star.py`.
+- `print_block_heatmaps`: heatmaps por bloco (rank, factibilidade, comprimento,
+  tempo) em `comparison_results_paper/plots/block_heatmaps.pdf`.
+- `bit_star_dubins` removido também do `plot_comparison.py`.
+
+**Tabela final (Menger + 5 %; 100 cenários):**
+
+| Planner | Feas | Tempo (CPU) | Best 10 | Norm. Len | Avg Rank |
+|---|---|---|---|---|---|
+| DE2D_NURBS (proposto) | 0.99 | 0.78 s | 8/10 | 1.001 | 1.73 |
+| RRT* ASV | 1.00 | 20.00 s | 1/10 | 1.033 | 2.18 |
+| RRT* Dubins | 0.44 | 48.12 s | 0/10 | --- | 6.06 |
+| RRT* | 0.39 | 0.12 s | 0/10 | --- | 6.35 |
+| RRT* + B-spline | 0.21 | 0.24 s | 0/10 | --- | 6.55 |
+| RRT* Dubins + B-spline | 0.17 | 50.76 s | 1/10 | 1.000 | 7.00 |
+| Dubins-RRT* | 0.24 | 335.30 s | 0/10 | --- | 7.12 |
+| Modified Dubins-RRT* + CCPOA | 0.17 | 301.60 s | 0/10 | --- | 7.35 |
+
+Configs selecionadas por variante: `rrt_star` ← `cc3.0_ed0.4_mi500`;
+`rrt_star_smooth` ← `cc1.0_ed0.1_mi1000`; `rrt_star_dubins` ←
+`cc6.0_yawuniform`; `rrt_dubins_smooth` ← `cc6.0_yawtoward_goal`;
+`modified_dubins_rrt_star` ← `eta0.3_safe0.0`; `..._ccpoa` ← `eta0.1_safe0.0`;
+`rrt_star_asv` ← `ca1.0_cb1.5`.
+
+**Correção do desempate na seleção (2026-10-19):** o desempate entre configs
+dentro da zona de equivalência (CD Nemenyi) usava `mean_length` antes de
+`mean_time`; diferenças de comprimento no nível de ruído (ex.: 3.3062594 vs
+3.3063358, ~0.002 %) faziam escolher uma config 60× mais lenta porém idêntica em
+qualidade (ex.: `rrt_star_smooth_cc1.0_ed0.1_mi4000` a 3.76 s em vez de `mi500` a
+0.06 s). `select_best_grid_configs` agora, dentro do conjunto equivalente,
+mantém as de maior factibilidade, trata comprimento/curvatura dentro de 1 %
+(`_SELECT_QUAL_TOL`) como empate e escolhe a **mais rápida**.
+
+**Piso de tempo do pós-processamento (2026-10-19):** como `rrt_star_smooth` é
+`rrt_star` + B-spline, sua config representante é obrigada a gastar ≥ ao tempo
+médio da config escolhida de `rrt_star` (`_VARIANT_MIN_TIME_VS`), para o
+smoothing não aparecer artificialmente mais barato que o planner base. Isso
+leva o representante de `rrt_star_smooth` de `mi500` (0.06 s) a
+`cc1.0_ed0.1_mi1000` (**0.24 s**, feas 0.21), que é a config de maior
+factibilidade com tempo ≥ 0.12 s.
+
+**Factibilidade como critério primário + correção do "Best 10" (2026-10-19):**
+`select_best_grid_configs` passou a filtrar primeiro as configs com a **maior
+taxa de factibilidade** da variante (antes de aplicar CD/comprimento/tempo), de
+modo que a config escolhida de `rrt_star` (`cc3.0_ed0.4_mi500`, feas 0.39) e de
+`rrt_star_smooth` (`cc1.0_ed0.1_mi1000`, feas 0.21) são as de maior factibilidade
+de cada grid. Além disso, `print_latex_table` contava vitória de bloco comparando
+o comprimento médio apenas das sementes bem-sucedidas — uma variante com
+factibilidade 0.21 aparecia "vencendo" 7/10 blocos por só ser factível nas
+sementes fáceis (curtas). Agora um planner só vence um bloco se for factível em
+**todas** as 10 sementes dele; `Norm. Length` usa o mesmo conjunto elegível
+(`--` quando nunca resolveu um bloco inteiro). Efeito: DE2D 8/10, RRT\*-ASV 1/10,
+RRT\*-Dubins+B-spline 1/10, demais 0/10.
+
+**Nota (RRT\* vs RRT\*+B-spline):** não existe config de `rrt_star_smooth` que
+supere a factibilidade do `rrt_star` (máx 0.21 vs 0.39). O smoothing **encurva**
+os caminhos e pode jogá-los dentro de obstáculos (colisão), e as duas variantes
+maximizam em regimes diferentes de `connect_circle_dist` (1.0 vs 3.0), então não
+são comparáveis config-a-config. Emparelhadas na mesma base, `raw_feas` e
+`smooth_feas` divergem: em `cc=3.0` o raw é melhor (0.39 vs 0.00) e em `cc=1.0` o
+smooth é melhor (0.00 vs 0.21).
+
+**B-spline: versão anterior vs atual (`response_to_reviewer.md` B.9):** o
+RRT\*+B-spline roda o **mesmo** RRT\* e passa o melhor caminho pelo estágio de
+smoothing (não gera trajetória diferente). Na versão anterior os parâmetros
+eram **fixos** e, quando o B-spline resultava em **colisão** (ou a interpolação
+falhava), o código **retornava o caminho original do RRT\*** — nesses casos o
+"RRT\*+B-spline" era literalmente a trajetória do RRT\* e sem custo extra de
+spline, o que derrubava a média e o desvio do tempo abaixo do RRT\* puro. Na
+versão atual: parâmetros varridos/selecionados + piso de tempo
+(`_VARIANT_MIN_TIME_VS`), e o RRT\*+B-spline passa a demorar **0.24 s ≥ 0.12 s**
+do RRT\*.
+
+**Bug de tempo do DE2D sem obstáculos (2026-10-19):** em `de2d_nurbs.py:272`,
+`is_circle` exigia `len(expanded_obs) > 0`; com `prog00` (0 obstáculos) caía no
+ramo `detailed_collision_with_polygons`, que mesmo com lista vazia cria um
+`LineString` do Shapely **por segmento** (~120/indivíduo × 40 000 indivíduos) →
+~10 s/cenário, contra ~0.4–1.1 s com obstáculos. Não afetava qualidade (só
+tempo; comprimentos bit-idênticos). Correção: pular a colisão quando
+`expanded_obs` é vazio. Re-medidos os 100 cenários DE2D (backup
+`summary_pre_de2dtime.pkl`): `prog00` caiu de **9.97 s → 0.375 s**, heatmap agora
+monotônico (0.375 → 1.155 s), e a média IQR do DE2D passou de 0.80 → **0.78 s**.
+Tabela/gráficos regenerados (`combined_summary.csv`, `plots/`).
+
+
+---
+
 ## 7. Resposta ao revisor (movida)
 
 A resposta ao revisor (em inglês) foi movida para **`response_to_reviewer.md`**,
-com uma versão **sintética** (Part A) e uma **completa** (Part B), incluindo o
-significado de cada variável testada em cada algoritmo.
+com uma versão **sintética** (Part A), uma **completa** (Part B, com o
+significado de cada variável) e uma **Part C** com a tabela de resultados em
+LaTeX e os parâmetros efetivamente usados por cada algoritmo.
 
 ---
 
@@ -420,5 +560,7 @@ significado de cada variável testada em cada algoritmo.
 curvatura/suavização, medição de tempo sob joblib, redução da densidade de
 pontos de colisão/curvatura, correção do parâmetro de passo do RRT*, sweep de
 `expand_dis`, sweep do grid completo em substituição às variantes tuned, sweep
-de parâmetros das variantes Dubins, checkpoint periódico com retomada e resposta
-ao revisor em `response_to_reviewer.md`).*
+de parâmetros das variantes Dubins, checkpoint periódico com retomada, correção
+do critério de factibilidade de curvatura (Menger + 5 %) com recomputação
+offline, reorganização do `analyze_comparison.py` e resposta ao revisor em
+`response_to_reviewer.md`).*

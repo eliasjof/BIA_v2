@@ -47,7 +47,7 @@ def path_length(path):
 
 
 def max_curvature_numerical(path):
-    if path is None or len(path) < 4:
+    if path is None or len(path) < 3:
         return np.nan
     a = np.asarray(path)
     # Menger curvature: curvature of circumcircle through (i-1, i, i+1)
@@ -99,13 +99,104 @@ def apply_extended_start_goal(path, config, step_size=0.05):
 
 
 def _numerical_curvature_violation(pts, kappa_max):
-    a = np.asarray(pts)
-    dx = np.gradient(a[:, 0])
-    dy = np.gradient(a[:, 1])
-    ddx = np.gradient(dx)
-    ddy = np.gradient(dy)
+    """Finite-difference curvature violation (kept for reference/back-compat).
+
+    Superseded by the Menger-based ``curvature_metrics`` for the feasibility
+    decision: this estimator is sensitive to duplicate points and non-uniform
+    spacing and produced spurious spikes on Dubins paths.
+    """
+    a = np.asarray(pts, dtype=float)
+    if a.ndim != 2 or a.shape[0] < 3:
+        return 0.0
+    # Drop consecutive duplicate points.  Dubins paths (and tree paths) often
+    # carry repeated vertices at segment joints; a zero-length segment makes
+    # the finite-difference derivatives blow up and produces spurious
+    # curvature spikes that wrongly mark valid paths as infeasible.
+    d = np.linalg.norm(np.diff(a, axis=0), axis=1)
+    keep = np.concatenate([[True], d > 1e-6])
+    a = a[keep]
+    if a.shape[0] < 3:
+        return 0.0
+    # Differentiate with respect to arc length instead of the array index so
+    # the estimator is correct even when the path is not uniformly sampled.
+    s = np.concatenate(
+        [[0.0], np.cumsum(np.linalg.norm(np.diff(a, axis=0), axis=1))])
+    dx = np.gradient(a[:, 0], s)
+    dy = np.gradient(a[:, 1], s)
+    ddx = np.gradient(dx, s)
+    ddy = np.gradient(dy, s)
     k = np.abs(dx * ddy - dy * ddx) / ((dx ** 2 + dy ** 2) ** 1.5 + 1e-8)
     return float(np.sum(np.maximum(0, k - kappa_max) ** 2))
+
+
+# Relative tolerance applied to the curvature limit when deciding feasibility.
+# Menger curvature is exact for arcs but the sampled path of a curve with
+# varying curvature carries an O(h^2) discretisation error; 5% absorbs it while
+# still rejecting the gross violations of piecewise-linear (raw RRT*) paths.
+KAPPA_REL_TOL = 0.05
+
+
+def curvature_metrics(pts, kappa_max, tol=KAPPA_REL_TOL):
+    """Curvature violation / respected flag from the path's Menger curvature.
+
+    ``kappa_viol`` is the squared exceedance of the *maximum discrete (Menger)*
+    curvature over the limit ``kappa_max * (1 + tol)``.  Menger curvature is
+    exact for circular arcs (equals ``1/R``) and is insensitive to a
+    non-uniform point spacing, unlike finite differences on the raw samples.
+    The small relative tolerance absorbs the discretisation error of the
+    sampled path.
+    """
+    if pts is None:
+        return np.nan, False
+    a = np.asarray(pts, dtype=float)
+    if a.ndim != 2 or a.shape[0] < 2:
+        return np.nan, False
+    if a.shape[0] < 3:
+        return 0.0, True
+    k_max = max_curvature_numerical(a)
+    if np.isnan(k_max):
+        return np.nan, False
+    limit = kappa_max * (1.0 + tol)
+    return max(0.0, k_max - limit) ** 2, bool(k_max <= limit)
+
+
+def posthoc_metrics(pts, kappa_max, obs, radius, bounds):
+    """Curvature / workspace / obstacle violations of a finished path.
+
+    Returns ``(kappa_viol, kappa_respected, ws_viol, obs_viol)`` and mirrors the
+    feasibility definition used throughout the comparison.  Kept in one place so
+    that existing runs can be re-evaluated offline (see
+    ``recompute_feasibility.py``) with the same rules as a fresh run.
+    """
+    kappa_viol, kappa_respected = curvature_metrics(pts, kappa_max)
+    ws_viol = 0.0
+    obs_viol = 0.0
+    if pts is None:
+        return kappa_viol, kappa_respected, ws_viol, obs_viol
+    a = np.asarray(pts, dtype=float)
+    if a.ndim != 2 or a.shape[0] < 2:
+        return kappa_viol, kappa_respected, ws_viol, obs_viol
+
+    xmin, xmax, ymin, ymax = bounds
+    ws_viol = float(np.sum(
+        (a[:, 0] < xmin) | (a[:, 0] > xmax) |
+        (a[:, 1] < ymin) | (a[:, 1] > ymax)))
+
+    if obs is not None:
+        for ob in obs:
+            ox, oy, size = ob[0], ob[1], ob[2]
+            d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
+            pen = np.maximum(0, size + radius - d)
+            if np.any(pen > 0):
+                obs_viol += float(np.sum(pen ** 2))
+    return kappa_viol, kappa_respected, ws_viol, obs_viol
+
+
+def is_feasible(collision_free, kappa_respected, ws_viol, obs_viol, cv_val):
+    """Final feasibility flag given the post-hoc violations and cost."""
+    return bool(
+        collision_free and kappa_respected and ws_viol < 0.5
+        and obs_viol < 1e-5 and cv_val <= 1e-5)
 
 
 # ──────────────────────────────────────────────
@@ -958,44 +1049,20 @@ def _run_single_task(sc, pname, runner_fn):
     cv_opt = result.get('cv_opt', np.nan)
 
     # --- Post-hoc feasibility for ALL planners ---
-    # Use gradient-based curvature violation (same method as the
-    # optimizer's individual_cost_function) for consistency.
-    # Avoids discrepancies from different curvature estimators
-    # (e.g. Menger vs gradient).
-    if pts is not None and len(np.asarray(pts)) >= 2:
-        kappa_viol = _numerical_curvature_violation(pts, c.kappa_max)
-        kappa_respected = kappa_viol <= 1e-5
-    else:
-        kappa_viol = np.nan
-        kappa_respected = False
-
-    ws_viol = 0.0
-    if pts is not None and len(np.asarray(pts)) >= 2:
-        a = np.asarray(pts)
-        ws_viol = float(np.sum(
-            (a[:, 0] < c.xmin) | (a[:, 0] > c.xmax) |
-            (a[:, 1] < c.ymin) | (a[:, 1] > c.ymax)
-        ))
-
-    obs_viol = 0.0
-    if pts is not None and len(np.asarray(pts)) >= 2:
-        a = np.asarray(pts)
-        if hasattr(c, 'obs') and c.obs is not None:
-            for ob in c.obs:
-                ox, oy, size = ob[0], ob[1], ob[2]
-                d = np.hypot(a[:, 0] - ox, a[:, 1] - oy)
-                pen = np.maximum(0, size + c.radius - d)
-                if np.any(pen > 0):
-                    obs_viol += float(np.sum(pen ** 2))
+    # Menger-curvature check (tolerant, see `curvature_metrics`) evaluated
+    # identically for every planner so the comparison stays fair.
+    kappa_viol, kappa_respected, ws_viol, obs_viol = posthoc_metrics(
+        pts, c.kappa_max, getattr(c, 'obs', None), c.radius,
+        (c.xmin, c.xmax, c.ymin, c.ymax))
 
     collision_free = result.get('collision_free', False)
     cv_val = kappa_viol + ws_viol + obs_viol
     if np.isnan(cv_val):
         cv_val = np.inf
-    feasible = collision_free and kappa_respected and ws_viol < 0.5 and (obs_viol < 1e-5) and (cv_val <= 1e-5)
     if cv_val <= 1e-5:
         cv_val = 0.0
-        feasible = collision_free and kappa_respected and ws_viol < 0.5 and (obs_viol < 1e-5)
+    feasible = is_feasible(collision_free, kappa_respected, ws_viol,
+                           obs_viol, cv_val)
 
     record = dict(
         scenario=label, seed=seed, planner=pname,
@@ -1466,7 +1533,7 @@ def main():
         else:
             i += 1
 
-    seeds = list(range(30)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
+    seeds = list(range(10)) #[2, 4, 5, 10, 21, 40, 50, 60, 70, 80]  # random seeds for scenarios
 
     experiments = [
         # # # 1) No obstacles

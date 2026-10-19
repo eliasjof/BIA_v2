@@ -269,21 +269,25 @@ class DE2D_NURBS:
         # ========== Collision (per individual, Shapely-dependent) ==========
         h_obs = np.zeros(pop.shape[0])
         expanded_obs = static_params["expanded_obstacles"]
-        is_circle = (
-            len(expanded_obs) > 0 and
-            isinstance(expanded_obs[0], (tuple, list)) and
-            len(expanded_obs[0]) == 3
-        )
-        for i in range(pop.shape[0]):
-            pts = points_all[i]
-            if is_circle:
-                dists = check_collisions_cylinderBT(pts, expanded_obs, r)
-                n_segs = len(dists)
-                inside_len = np.sum(np.array(dists)**2) + n_segs/nsampling if n_segs > 0 else 0.0
-            else:
-                n_segs, inside_len, _, _ = detailed_collision_with_polygons(
-                    pts, expanded_obs)
-            h_obs[i] = alpha_obs * inside_len if n_segs > 0 else 0.0
+        # When there are no obstacles the collision term is zero.  Guarding
+        # here avoids falling through to the Shapely polygon branch below,
+        # which builds one LineString per curve segment even for an empty
+        # obstacle list and made obstacle-free scenarios ~20x slower.
+        if len(expanded_obs) > 0:
+            is_circle = (
+                isinstance(expanded_obs[0], (tuple, list)) and
+                len(expanded_obs[0]) == 3
+            )
+            for i in range(pop.shape[0]):
+                pts = points_all[i]
+                if is_circle:
+                    dists = check_collisions_cylinderBT(pts, expanded_obs, r)
+                    n_segs = len(dists)
+                    inside_len = np.sum(np.array(dists)**2) + n_segs/nsampling if n_segs > 0 else 0.0
+                else:
+                    n_segs, inside_len, _, _ = detailed_collision_with_polygons(
+                        pts, expanded_obs)
+                h_obs[i] = alpha_obs * inside_len if n_segs > 0 else 0.0
 
         f = length
         g = np.zeros((pop.shape[0], 1))

@@ -48,8 +48,6 @@ PLANNER_STYLE = {
     'rrt_dubins_smooth': dict(color='#FF9800', ls='-.', lw=2.0, label='RRT* Dubins + B-spline'),
     'modified_dubins_rrt_star': dict(color="#00FF62", ls='--', lw=2.0, label='Modified Dubins-RRT*'),
     'modified_dubins_rrt_star_ccpoa': dict(color="#0A4922", ls='--', lw=2.0, label='Modified Dubins-RRT* + CCPOA'),
-    'bit_star_dubins':   dict(color='#FFEB3B', ls='-.', lw=2.0, label='BIT* Dubins'),
-    'bit_star_theta':    dict(color='#E91E63', ls='--', lw=2.0, label='BIT* Theta'),
     'de2d_nurbs':        dict(color="blue", ls='-',  lw=2.5, label='DE2D_NURBS'),
     'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
     'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),
@@ -127,7 +125,7 @@ def read_df_safe(results_dir):
 INFEASIBLE_ALPHA = 1.0
 
 DUBINS_PLANNERS = {
-    'rrt_star_dubins', 'bit_star_dubins', 'rrt_dubins_smooth',
+    'rrt_star_dubins', 'rrt_dubins_smooth',
     'modified_dubins_rrt_star', 'modified_dubins_rrt_star_ccpoa',
     'rrt_star_asv',
 }
