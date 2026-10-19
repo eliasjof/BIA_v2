@@ -596,8 +596,8 @@ def print_block_heatmaps(df):
          feas_p.values, lambda v: f'{v*100:.0f}%', (0.0, 1.0)),
         (len_norm.values, 'Length vs. best of block (x)', 'RdYlGn_r',
          len_p.values, lambda v: f'{v:.2f}', None),
-        (time_log.values, 'log10(Time vs. best of block)', 'RdYlGn_r',
-         time_p.values, lambda v: f'{v:.2f}s', None),
+        (time_log.values, 'Computation cost  (time vs. best of block, log scale)',
+         'RdYlGn_r', time_p.values, lambda v: f'{v:.2f}s', None),
     ]
 
     n = len(planners)
@@ -623,7 +623,9 @@ def print_block_heatmaps(df):
                     continue
                 ax.text(j, i, fmt(av), ha='center', va='center', fontsize=7,
                         color='black')
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.03)
+        if title.startswith('Computation cost'):
+            cbar.set_label('log scale', fontsize=8)
 
     fig.tight_layout()
     out_path = plot_dir / 'block_heatmaps.pdf'

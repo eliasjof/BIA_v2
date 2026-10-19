@@ -42,15 +42,15 @@ def _curvature_analytical_from_dubins(pts, kappa_max):
 
 
 PLANNER_STYLE = {
-    'rrt_star':          dict(color="#4CA3AF", ls='dashed',  lw=1.5, label='RRT*'),
-    'rrt_star_smooth':   dict(color="#2B5E64", ls='--', lw=2.0, label='RRT* + B-spline'),
-    'rrt_star_dubins':   dict(color="#8527B0", ls='dotted',  lw=1.5, label='RRT* Dubins'),
-    'rrt_dubins_smooth': dict(color='#FF9800', ls='-.', lw=2.0, label='RRT* Dubins + B-spline'),
-    'modified_dubins_rrt_star': dict(color="#00FF62", ls='--', lw=2.0, label='Modified Dubins-RRT*'),
-    'modified_dubins_rrt_star_ccpoa': dict(color="#0A4922", ls='--', lw=2.0, label='Modified Dubins-RRT* + CCPOA'),
-    'de2d_nurbs':        dict(color="blue", ls='-',  lw=2.5, label='DE2D_NURBS'),
-    'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, label='PSO2D_NURBS'),
-    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, label='RRT* ASV'),
+    'rrt_star':          dict(color="#4CA3AF", ls='dashed',  lw=1.5, marker='o', label='RRT*'),
+    'rrt_star_smooth':   dict(color="#2B5E64", ls='--', lw=2.0, marker='s', label='RRT* + B-spline'),
+    'rrt_star_dubins':   dict(color="#8527B0", ls='dotted',  lw=1.5, marker='^', label='RRT* Dubins'),
+    'rrt_dubins_smooth': dict(color='#FF9800', ls='-.', lw=2.0, marker='v', label='RRT* Dubins + B-spline'),
+    'modified_dubins_rrt_star': dict(color="#00FF62", ls='--', lw=2.0, marker='D', label='Modified Dubins-RRT*'),
+    'modified_dubins_rrt_star_ccpoa': dict(color="#0A4922", ls='--', lw=2.0, marker='X', label='Modified Dubins-RRT* + CCPOA'),
+    'de2d_nurbs':        dict(color="blue", ls='-',  lw=2.5, marker='*', label='DE2D_NURBS'),
+    'pso2d_nurbs':       dict(color='#795548', ls=':',  lw=2.5, marker='h', label='PSO2D_NURBS'),
+    'rrt_star_asv':      dict(color='#F44336', ls=':',  lw=2.0, marker='P', label='RRT* ASV'),
     'rrt_star_ccdist_1_5': dict(color="#3F51B5", ls='--', lw=1.5, label='RRT* CCDIST 1.5'),
     'rrt_star_ccdist_2_5': dict(color="#673AB7", ls='--', lw=1.5, label='RRT* CCDIST 2.5'),
     'rrt_star_ccdist_3_0': dict(color="#1F1941", ls='dashdot', lw=1.5, label='RRT* CCDIST 3.0'),
@@ -65,6 +65,26 @@ PLANNER_STYLE = {
     'rrt_star_smooth_tuned': dict(color="#00695C", ls='-.', lw=1.8, label='RRT* + B-spline (tuned)'),
     'rrt_star_dubins_ccdist_3_5': dict(color="#E91E63", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 3.5'),
     'rrt_star_dubins_ccdist_6_0': dict(color="#9C27B0", ls='dotted', lw=1.5, label='RRT* Dubins CCDIST 6.0'),
+}
+
+
+# Canonical method name -> representative configuration stored in the results.
+# `analyze_comparison.select_best_grid_configs` relabels the winner of each
+# sweep to the canonical name only in memory, so the pickled summary/paths keep
+# the configuration name (e.g. `rrt_star_dubins_cc6.0_yawuniform`).  The plot
+# resolves the canonical names through this map so that all compared methods
+# share one legend/style entry.
+SELECTED_CONFIGS = {
+    'rrt_star': 'rrt_star_cc2.0_ed0.4_mi1000',
+    'rrt_star_smooth': 'rrt_star_smooth_cc1.0_ed0.1_mi1000',
+    'rrt_star_dubins': 'rrt_star_dubins_cc6.0_yawuniform',
+    'rrt_dubins_smooth': 'rrt_dubins_smooth_cc6.0_yawtoward_goal',
+    'modified_dubins_rrt_star': 'modified_dubins_rrt_star_eta0.3_safe0.0',
+    'modified_dubins_rrt_star_ccpoa':
+        'modified_dubins_rrt_star_ccpoa_eta0.1_safe0.0',
+    'rrt_star_asv': 'rrt_star_asv_ca1.0_cb1.5',
+    'de2d_nurbs': 'de2d_nurbs',
+    'pso2d_nurbs': 'pso2d_nurbs',
 }
 
 
@@ -186,7 +206,21 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     has_feas = 'feasible' in df_sub.columns
 
     if planners is not None:
-        df_sub = df_sub[df_sub['planner'].isin(planners)]
+        # Resolve canonical method names to the configuration names actually
+        # stored in the results (fall back to the canonical name if the mapped
+        # configuration is absent, e.g. for older experiments).
+        present = set(df_sub['planner'])
+        raw_to_display = {}
+        for p in planners:
+            raw = SELECTED_CONFIGS.get(p, p)
+            if raw not in present and p in present:
+                raw = p
+            raw_to_display[raw] = p
+        df_sub = df_sub[df_sub['planner'].isin(raw_to_display)].copy()
+        df_sub['_display'] = df_sub['planner'].map(raw_to_display)
+        _order = {p: i for i, p in enumerate(planners)}
+        df_sub = df_sub.sort_values(
+            by='_display', key=lambda s: s.map(_order))
 
     fig, ax = plt.subplots(figsize=(9, 6.5))
 
@@ -229,19 +263,23 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
 
     for _, row in df_sub.iterrows():
         pname = row['planner']
+        display = row.get('_display', pname)
         pkey = f"{scenario_label}_{pname}"
         path = paths_store.get(pkey)
 
-        style = PLANNER_STYLE.get(pname, dict(color='gray', ls='-', lw=1))
+        style = PLANNER_STYLE.get(display, dict(color='gray', ls='-', lw=1))
 
         if path is not None and len(path) >= 2:
             lw = style['lw']
+            mk = dict(marker=style.get('marker'), markersize=3.2,
+                      markeredgewidth=0.5, markevery=0.1)
             if has_feas and not row['feasible']:
                 ax.plot(path[:, 0], path[:, 1], color=style['color'],
-                        ls=style['ls'], lw=lw, alpha=INFEASIBLE_ALPHA, zorder=4)
+                        ls=style['ls'], lw=lw, alpha=INFEASIBLE_ALPHA,
+                        zorder=4, **mk)
             else:
                 ax.plot(path[:, 0], path[:, 1], color=style['color'],
-                        ls=style['ls'], lw=lw, zorder=4)
+                        ls=style['ls'], lw=lw, zorder=4, **mk)
 
         ok = row['success']
         length = row['length']
@@ -262,11 +300,13 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
             metric_str = ""
 
         lbl = f"{style['label']}{metric_str}"
-        leg_line = plt.Line2D([0], [0], color=style['color'], ls=style['ls'], lw=style['lw'])
+        leg_line = plt.Line2D([0], [0], color=style['color'], ls=style['ls'],
+                              lw=style['lw'], marker=style.get('marker'),
+                              markersize=4, markeredgewidth=0.5)
         legend_lines.append(leg_line)
         legend_labels.append(lbl)
 
-    ax.legend(legend_lines, legend_labels, fontsize=7, loc='upper left',
+    ax.legend(legend_lines, legend_labels, fontsize=5, loc='upper left',
               framealpha=0.9, edgecolor='gray')
     
 
@@ -276,24 +316,28 @@ def plot_scenario(scenario_label, df_sub, paths_store, obstacles,
     curv_ax.axhline(ws.kappa_max, color='gray', ls='--', lw=1, label=f'$\\kappa_{{max}}={ws.kappa_max:.2f}$')
     for _, row in df_sub.iterrows():
         pname = row['planner']
+        display = row.get('_display', pname)
         pkey = f"{scenario_label}_{pname}"
         path = paths_store.get(pkey)
-        style = PLANNER_STYLE.get(pname, dict(color='gray', ls='-', lw=1.5))
+        style = PLANNER_STYLE.get(display, dict(color='gray', ls='-', lw=1.5))
         if path is not None and len(path) >= 3:
             curv_key = pkey + '_curvature'
             if curv_key in paths_store:
                 k, s = paths_store[curv_key]
-            elif pname in DUBINS_PLANNERS:
+            elif display in DUBINS_PLANNERS:
                 k, s = _curvature_analytical_from_dubins(path, ws.kappa_max)
             else:
                 k, s = _curvature_and_arc(path)
             curv_ax.plot(s, k, color=style['color'], ls=style['ls'], lw=style['lw'],
+                         marker=style.get('marker'), markersize=3,
+                         markeredgewidth=0.5, markevery=0.12,
                          label=style['label'])
     curv_ax.set_xlabel('Arc length (m)', fontsize=12)
     curv_ax.set_ylabel('Curvature $\\kappa$ (m$^{-1}$)', fontsize=12)
     curv_ax.tick_params(labelsize=10)
     curv_ax.grid(True, alpha=0.3)
-    curv_ax.legend(fontsize=8, loc='upper right', framealpha=0.9, edgecolor='gray')
+    curv_ax.set_ylim(0, 9)
+    curv_ax.legend(fontsize=6, loc='upper right', framealpha=0.9, edgecolor='gray')
     curv_fig.tight_layout()
     curv_path = save_dir / f'curvature_{scenario_label}.{ext}'
     curv_fig.savefig(curv_path, dpi=150, bbox_inches='tight')
@@ -380,25 +424,15 @@ if __name__ == '__main__':
                         help='(opcional) sobrescreve a lista fixa abaixo')
     args = parser.parse_args()
 
-    # Lista de planners para plotar (comente/descomente os que desejar)
+    # Planners shown in the comparison figures.
     planners = args.planners if args.planners is not None else [
         'rrt_star',
         'rrt_star_smooth',
-        # steer-step (expand_dis) sweep
-        'rrt_star_expand_0_2',
-        'rrt_star_expand_0_5',
-        'rrt_star_smooth_expand_0_2',
-        'rrt_star_smooth_expand_0_5',
-        # tuned configurations (see tune_rrt_star.py)
-        'rrt_star_tuned',
-        'rrt_star_smooth_tuned',
-        # rewire-radius (ccdist) sweep
-        'rrt_star_ccdist_1_5',
-        'rrt_star_ccdist_2_5',
-        'rrt_star_ccdist_3_0',
-        'rrt_star_smooth_ccdist_1_5',
-        'rrt_star_smooth_ccdist_2_5',
-        'rrt_star_smooth_ccdist_3_0',
+        'rrt_star_dubins',
+        'rrt_dubins_smooth',
+        'modified_dubins_rrt_star',
+        'modified_dubins_rrt_star_ccpoa',
+        'rrt_star_asv',
         'de2d_nurbs',
         'pso2d_nurbs',
     ]
