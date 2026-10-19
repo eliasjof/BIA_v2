@@ -137,20 +137,27 @@ def ensure_feasible(df):
     df = df.copy()
     if 'collision_free' not in df.columns:
         df['collision_free'] = True
+    has_feas = 'feasible' in df.columns
     feas_list = []
     for _, row in df.iterrows():
+        # Prefer the authoritative per-run flag (computed with the strict
+        # curvature rule in the runner / recompute_feasibility).  Only fall
+        # back to a cv-based recomputation when it is missing, otherwise a
+        # path just above the 5 % tolerance but with a rounded cv=0 would be
+        # wrongly counted as feasible.
+        if has_feas and not pd.isna(row.get('feasible', np.nan)):
+            feas_list.append(bool(row['feasible']))
+            continue
         col_free = row.get('collision_free', True)
         if isinstance(col_free, float):
             col_free = bool(col_free) if not np.isnan(col_free) else True
         if not col_free:
             feas_list.append(False)
             continue
-        
+
         cv = row.get('cv')
         if cv is not None and not (isinstance(cv, float) and np.isnan(cv)):
             feas_list.append(float(cv) <= CURV_FEAS_THRESHOLD)
-        elif 'feasible' in df.columns and not pd.isna(row.get('feasible', np.nan)):
-            feas_list.append(bool(row['feasible']))
         else:
             feas_list.append(col_free)
     df['feasible'] = feas_list
@@ -229,14 +236,12 @@ _SELECT_ASC = [False, True, True, True]
 # below this tolerance are treated as equal and the fastest config is chosen.
 _SELECT_QUAL_TOL = 0.01
 
-# Variants that are a *post-process* of another (e.g. `rrt_star_smooth` is
-# `rrt_star` plus a B-spline pass).  To keep the comparison fair, the
-# representative configuration of the dependent variant is required to spend at
-# least as much mean CPU time as the chosen configuration of its base variant;
-# otherwise the post-process could appear artificially faster than the planner
-# it is built on.  Mapping: dependent variant -> base variant.
-_VARIANT_MIN_TIME_VS = {'rrt_star_smooth': 'rrt_star'}
-
+# Swept variants (`..._mi{N}`) are only allowed to use a budget above 500
+# iterations; the 500-iteration configuration is excluded from the
+# representative selection.  The `cc = 3.0` rewiring radius is likewise excluded
+# so that the compared configurations stay in the cheaper `cc` regimes.
+_MIN_SWEEP_MAX_ITER = 1000
+_EXCLUDED_SWEEP_CC = {3.0}
 
 def _nemenyi_cd(k, n, alpha=0.05):
     """Critical difference of the Nemenyi post-hoc test (same as tune script)."""
@@ -272,11 +277,9 @@ def select_best_grid_configs(df, verbose=True):
     curvature differences below a relative tolerance are treated as ties, and
     the fastest of the tied configurations is chosen (this avoids a
     pathological, very slow configuration that is statistically
-    indistinguishable from the winner).  Post-processed variants (e.g.
-    `rrt_star_smooth`) are additionally required to spend at least as much mean
-    CPU time as their base variant (`_VARIANT_MIN_TIME_VS`), so the smoothing
-    pass cannot make them look artificially faster than the planner they build
-    on.
+    indistinguishable from the winner).  Swept variants are restricted to
+    budgets above 500 iterations (`_MIN_SWEEP_MAX_ITER`) and to a rewiring
+    radius other than `cc = 3.0` (`_EXCLUDED_SWEEP_CC`).
     The winner is relabelled to the canonical variant name and the other
     configurations are dropped.  Non-swept planners (e.g. `de2d_nurbs`,
     `pso2d_nurbs`) are kept untouched.
@@ -284,18 +287,21 @@ def select_best_grid_configs(df, verbose=True):
     df = df.copy()
     df['_variant'] = df['planner'].apply(_variant_of)
 
+    # Discard the 500-iteration budget and the `cc = 3.0` radius from the swept
+    # variants (keep `max_iter > 500`, `connect_circle_dist != 3.0`); non-swept
+    # planners have neither suffix and are kept.
+    _mi = pd.to_numeric(
+        df['planner'].str.extract(r'_mi(\d+)$', expand=False), errors='coerce')
+    _cc = pd.to_numeric(
+        df['planner'].str.extract(r'_cc([0-9.]+)_ed[0-9.]+_mi\d+$',
+                                  expand=False), errors='coerce')
+    _keep = (_mi.isna() | (_mi >= _MIN_SWEEP_MAX_ITER)) & (
+        ~_cc.isin(_EXCLUDED_SWEEP_CC))
+    df = df[_keep].copy()
+
     keep = df['_variant'].isna().copy()
     picked = {}
-    chosen_time = {}
-    # Process base variants before their post-processed dependents so the
-    # latter's time floor (`_VARIANT_MIN_TIME_VS`) is already known.
-    variants = sorted(df['_variant'].dropna().unique(),
-                      key=lambda v: (v in _VARIANT_MIN_TIME_VS, v))
-    grouped = dict(tuple(df[df['_variant'].notna()].groupby('_variant')))
-    for variant in variants:
-        gsub = grouped.get(variant)
-        if gsub is None:
-            continue
+    for variant, gsub in df[df['_variant'].notna()].groupby('_variant'):
         mean_rank = _variant_mean_rank(gsub)
         if mean_rank.empty:
             continue
@@ -323,14 +329,6 @@ def select_best_grid_configs(df, verbose=True):
         cd_ok = cand.index.isin(equivalent)
         if cd_ok.any():
             cand = cand[cd_ok]
-        # Fairness floor: a post-processed variant must not beat its base
-        # variant on CPU time (see `_VARIANT_MIN_TIME_VS`).
-        base = _VARIANT_MIN_TIME_VS.get(variant)
-        if base is not None and base in chosen_time:
-            floored = cand[cand['mean_time']
-                           >= chosen_time[base] - 1e-9]
-            if len(floored):
-                cand = floored
         if len(cand):
             len_min = cand['mean_length'].min()
             if np.isfinite(len_min) and len_min > 0:
@@ -342,7 +340,6 @@ def select_best_grid_configs(df, verbose=True):
                             <= cv_min * (1.0 + _SELECT_QUAL_TOL)]
         chosen = cand['mean_time'].idxmin() if len(cand) else best
 
-        chosen_time[variant] = float(agg.loc[chosen, 'mean_time'])
         picked[variant] = (chosen, float(mean_rank.loc[chosen]),
                            float(mean_rank.loc[best]), float(cd))
         keep |= (df['planner'] == chosen)

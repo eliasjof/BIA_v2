@@ -912,13 +912,13 @@ def run_de2d_nurbs(config, seed=None):
                 cv_opt=cv_opt)
 
 
-def run_pso2d_nurbs(config, seed=None):
+def run_pso2d_nurbs(config, seed=None, n_generations=400, pop_size=100):
     if seed is not None:
         config.seed = seed
 
     t0 = time.perf_counter()
-    config.n_generations = 400
-    config.pop_size = 50
+    config.n_generations = n_generations
+    config.pop_size = pop_size
     config.alpha_obs = 1000
     config.alpha_kappa = 10.00
     config.alpha_workspace = 1.00

@@ -10,7 +10,7 @@
 | `modified_dubins_rrt_star_ccpoa` | `run_modified_dubins_rrt_star_ccpoa` | 1500 (RRT*) + 5 (CCPOA) | 20 | **4.5** | `step_size=0.05` (both) | `config.kappa_max` | CCPOA (5 iters) | max‑iter RRT* + CCPOA |
 | `rrt_star_asv` | `run_rrt_star_asv` | 5000 | 30 | **4.5** | `step_size=0.05` | `config.kappa_max` | – | max‑iter |
 | `de2d_nurbs` | `run_de2d_nurbs` | 450 gen × 100 pop = 45 k evals | – | – | – (DE) | `config.kappa_max` | – | fixed generations |
-| `pso2d_nurbs` | `run_pso2d_nurbs` | 500 gen × 50 pop = 25 k evals | – | – | – (PSO) | `config.kappa_max` | – | fixed generations |
+| `pso2d_nurbs` | `run_pso2d_nurbs` | 400 gen × 100 pop = 40 k evals | – | – | – (PSO) | `config.kappa_max` | – | fixed generations |
 
 ## 2. Step‑size adequacy
 - **Dubins‑based planners** (`path_resolution` / `step_size = 0.05 m`) → appropriate (≈ 0.7 × robot radius, matches minimum turning radius 0.73 m).
@@ -469,20 +469,43 @@ Factibilidade global do run: 3.2 % → **14.1 %**.
 
 | Planner | Feas | Tempo (CPU) | Best 10 | Norm. Len | Avg Rank |
 |---|---|---|---|---|---|
-| DE2D_NURBS (proposto) | 0.99 | 0.78 s | 8/10 | 1.001 | 1.73 |
-| RRT* ASV | 1.00 | 20.00 s | 1/10 | 1.033 | 2.18 |
-| RRT* Dubins | 0.44 | 48.12 s | 0/10 | --- | 6.06 |
-| RRT* | 0.39 | 0.12 s | 0/10 | --- | 6.35 |
-| RRT* + B-spline | 0.21 | 0.24 s | 0/10 | --- | 6.55 |
-| RRT* Dubins + B-spline | 0.17 | 50.76 s | 1/10 | 1.000 | 7.00 |
-| Dubins-RRT* | 0.24 | 335.30 s | 0/10 | --- | 7.12 |
-| Modified Dubins-RRT* + CCPOA | 0.17 | 301.60 s | 0/10 | --- | 7.35 |
+| DE2D_NURBS (proposto) | 0.99 | 0.78 s | 7/10 | 1.002 | 2.35 |
+| RRT* ASV | 1.00 | 20.00 s | 1/10 | 1.033 | 2.62 |
+| PSO2D_NURBS (baseline) | 0.69 | 7.29 s | 1/10 | 1.000 | 4.08 |
+| RRT* Dubins | 0.44 | 48.12 s | 0/10 | --- | 6.86 |
+| RRT* + B-spline | 0.21 | 0.24 s | 0/10 | --- | 7.35 |
+| RRT* Dubins + B-spline | 0.17 | 50.76 s | 1/10 | 1.000 | 7.87 |
+| Dubins-RRT* | 0.24 | 335.30 s | 0/10 | --- | 8.00 |
+| Modified Dubins-RRT* + CCPOA | 0.17 | 301.60 s | 0/10 | --- | 8.29 |
+| RRT* | 0.18 | 0.31 s | 0/10 | --- | 8.31 |
 
-Configs selecionadas por variante: `rrt_star` ← `cc3.0_ed0.4_mi500`;
+Configs selecionadas por variante: `rrt_star` ← `cc2.0_ed0.4_mi1000`;
 `rrt_star_smooth` ← `cc1.0_ed0.1_mi1000`; `rrt_star_dubins` ←
 `cc6.0_yawuniform`; `rrt_dubins_smooth` ← `cc6.0_yawtoward_goal`;
 `modified_dubins_rrt_star` ← `eta0.3_safe0.0`; `..._ccpoa` ← `eta0.1_safe0.0`;
 `rrt_star_asv` ← `ca1.0_cb1.5`.
+
+**Orçamento mínimo das variantes varridas (2026-10-19):** por decisão do usuário,
+o orçamento de **500 iterações foi excluído** da seleção das variantes varridas
+(`_MIN_SWEEP_MAX_ITER = 1000` em `analyze_comparison.select_best_grid_configs`):
+só entram configs com `max_iter > 500` (1000/2000/4000). As demais variantes não
+têm sufixo `_mi` e ficaram inalteradas.
+
+**Exclusão do `cc = 3.0` (2026-10-19):** por decisão do usuário, o raio de
+rewiring **`cc = 3.0` também foi retirado da busca** (`_EXCLUDED_SWEEP_CC = {3.0}`
+no mesmo filtro), para deixar RRT* e B-spline em regimes de custo comparáveis e
+facilitar a defesa com o revisor. O filtro extrai `_cc([0-9.]+)_ed..._mi...` e
+remove `cc = 3.0`; configs sem `_mi` (Dubins `cc 3.5/4.5/6.0`, MDR, ASV) não são
+afetadas. Com isso, a busca efetiva vira `cc ∈ {1.0, 2.0}` × `expand_dis` ×
+`max_iter ∈ {1000, 2000, 4000}` (24 configs × raw/smooth).
+Resultado: `rrt_star` ← `cc2.0_ed0.4_mi1000` (**feas 0.18, 0.31 s**; `cc=1.0` dá
+0.00 e `mi` não muda a qualidade nesse `cc`), `rrt_star_smooth` ←
+`cc1.0_ed0.1_mi1000` (**feas 0.21, 0.24 s**). Agora o B-spline domina o RRT*
+puro em factibilidade (0.21 vs 0.18), tempo (0.24 vs 0.31 s) e rank (7.35 vs
+8.31). Emparelhado na mesma base: `cc1.0_ed0.1_mi1000` raw 0.2394 s/feas 0.00 →
+smooth 0.2396 s/feas 0.21; `cc2.0_ed0.4_mi1000` raw 0.3075 s/feas 0.18 → smooth
+0.3077 s/feas 0.13. Ou seja, o smoothing só ajuda quando a base é serrilhada
+(`cc=1.0`) e atrapalha quando a base já é mais reta (`cc=2.0`).
 
 **Correção do desempate na seleção (2026-10-19):** o desempate entre configs
 dentro da zona de equivalência (CD Nemenyi) usava `mean_length` antes de
@@ -493,34 +516,66 @@ qualidade (ex.: `rrt_star_smooth_cc1.0_ed0.1_mi4000` a 3.76 s em vez de `mi500` 
 mantém as de maior factibilidade, trata comprimento/curvatura dentro de 1 %
 (`_SELECT_QUAL_TOL`) como empate e escolhe a **mais rápida**.
 
-**Piso de tempo do pós-processamento (2026-10-19):** como `rrt_star_smooth` é
-`rrt_star` + B-spline, sua config representante é obrigada a gastar ≥ ao tempo
-médio da config escolhida de `rrt_star` (`_VARIANT_MIN_TIME_VS`), para o
-smoothing não aparecer artificialmente mais barato que o planner base. Isso
-leva o representante de `rrt_star_smooth` de `mi500` (0.06 s) a
-`cc1.0_ed0.1_mi1000` (**0.24 s**, feas 0.21), que é a config de maior
-factibilidade com tempo ≥ 0.12 s.
+**Piso de tempo do pós-processamento — removido (2026-10-19):** chegou-se a impor
+que `rrt_star_smooth` gastasse ≥ ao tempo médio de `rrt_star`
+(`_VARIANT_MIN_TIME_VS`), o que levava o representante de `mi500` (0.06 s) a
+`cc1.0_ed0.1_mi1000` (**0.24 s**). Como `search_until_max_iter=True` roda o
+orçamento inteiro, `mi500` e `mi1000` produzem resultados **bit-idênticos**
+(mesma feas/length/cv nos 100 cenários) e a `mi1000` é **estritamente dominada**
+(4× mais lenta, mesmo resultado) — logo não havia justificativa técnica para o
+piso. Decisão: **reverter para `mi500`** (0.06 s) e justificar a diferença de
+tempo pela **comparação emparelhada na mesma base** (ver abaixo). O código
+`_VARIANT_MIN_TIME_VS` foi removido de `select_best_grid_configs`.
+
+**Comparação emparelhada RRT* vs RRT*+B-spline (estado atual):** na mesma base,
+os tempos são praticamente idênticos (o smoothing adiciona ~0.2 ms): base
+`cc1.0_ed0.1_mi1000` → raw 0.2394 s/feas 0.00 / smooth 0.2396 s/feas 0.21; base
+`cc2.0_ed0.4_mi1000` → raw 0.3075 s/feas 0.18 / smooth 0.3077 s/feas 0.13. O
+tempo da linha reportada do RRT\* (0.31 s, `cc=2.0`, `ed=0.4`) ser maior que o do
+RRT\*+B-spline (0.24 s, `cc=1.0`, `ed=0.1`) deve-se à **base escolhida** (raio de
+rewiring e passo), **não** ao custo do smoothing. O smoothing só ajuda a
+factibilidade quando a base é serrilhada (`cc=1.0`: 0.00→0.21); com base já mais
+reta (`cc=2.0`) ele corta cantos para dentro de obstáculos (0.18→0.13). Com
+`cc=3.0` fora da busca, o B-spline domina o RRT\* puro em factibilidade (0.21 vs
+0.18), tempo (0.24 vs 0.31 s) e rank (7.35 vs 8.31). Tabela emparelhada em
+`response_to_reviewer.md` (B.4) e nota no bullet "Avg Time" (Part C).
+
+**Explicação do `cc` para o revisor (2026-10-19):** em B.2 (definições) foi
+detalhado que `connect_circle_dist` é o **raio de vizinhança do rewiring**
+(`find_near_nodes`/`choose_parent`/`rewire`): dentro da bola escolhe o melhor pai e
+reconecta vizinhos através do novo nó quando isso reduz o custo. Raio maior →
+reconexão mais agressiva → o caminho final usa **menos segmentos, mais longos e
+melhor alinhados** (menos mudanças de direção), o que reduz a curvatura e por isso
+alcança factibilidade em casos onde `cc` pequeno não alcança; em troca, maior
+**custo por iteração** (mais vizinhos e mais checagens de colisão) → 0.099 s
+(`cc=1.0`) vs 0.308 s (`cc=2.0`) com `ed=0.4, mi=1000` (o `cc=3.0` é agora
+excluído da busca). Em B.9 foi acrescentado que
+o B-spline usa **15 pontos de controle** (ajuste rígido), por isso corta cantos e
+pode **colidir** quando o caminho bruto passa rente a obstáculos; melhoria futura =
+**aumentar o número de pontos de controle** para seguir melhor o corredor livre.
+
 
 **Factibilidade como critério primário + correção do "Best 10" (2026-10-19):**
 `select_best_grid_configs` passou a filtrar primeiro as configs com a **maior
 taxa de factibilidade** da variante (antes de aplicar CD/comprimento/tempo), de
 modo que a config escolhida de `rrt_star` (`cc3.0_ed0.4_mi500`, feas 0.39) e de
-`rrt_star_smooth` (`cc1.0_ed0.1_mi1000`, feas 0.21) são as de maior factibilidade
+`rrt_star_smooth` (`cc1.0_ed0.1_mi500`, feas 0.21) são as de maior factibilidade
 de cada grid. Além disso, `print_latex_table` contava vitória de bloco comparando
 o comprimento médio apenas das sementes bem-sucedidas — uma variante com
 factibilidade 0.21 aparecia "vencendo" 7/10 blocos por só ser factível nas
 sementes fáceis (curtas). Agora um planner só vence um bloco se for factível em
 **todas** as 10 sementes dele; `Norm. Length` usa o mesmo conjunto elegível
-(`--` quando nunca resolveu um bloco inteiro). Efeito: DE2D 8/10, RRT\*-ASV 1/10,
-RRT\*-Dubins+B-spline 1/10, demais 0/10.
+(`--` quando nunca resolveu um bloco inteiro). Efeito (naquela altura, sem o PSO
+de 100 pop): DE2D 8/10, RRT\*-ASV 1/10, RRT\*-Dubins+B-spline 1/10, demais 0/10.
+Com o PSO de 100 pop o DE2D fica 7/10 e o PSO ganha 1/10.
 
-**Nota (RRT\* vs RRT\*+B-spline):** não existe config de `rrt_star_smooth` que
-supere a factibilidade do `rrt_star` (máx 0.21 vs 0.39). O smoothing **encurva**
-os caminhos e pode jogá-los dentro de obstáculos (colisão), e as duas variantes
-maximizam em regimes diferentes de `connect_circle_dist` (1.0 vs 3.0), então não
-são comparáveis config-a-config. Emparelhadas na mesma base, `raw_feas` e
-`smooth_feas` divergem: em `cc=3.0` o raw é melhor (0.39 vs 0.00) e em `cc=1.0` o
-smooth é melhor (0.00 vs 0.21).
+**Nota (RRT\* vs RRT\*+B-spline):** com `cc=3.0` excluído, o `rrt_star_smooth`
+agora tem factibilidade máxima 0.21, acima do `rrt_star` (0.18, em `cc=2.0`). O
+smoothing **encurva** os caminhos e pode jogá-los dentro de obstáculos (colisão),
+e as duas variantes maximizam em regimes diferentes de `connect_circle_dist`
+(1.0 vs 2.0), então não são comparáveis config-a-config. Emparelhadas na mesma
+base, `raw_feas` e `smooth_feas` divergem: em `cc=2.0` o raw é melhor (0.18 vs
+0.13) e em `cc=1.0` o smooth é melhor (0.00 vs 0.21).
 
 **B-spline: versão anterior vs atual (`response_to_reviewer.md` B.9):** o
 RRT\*+B-spline roda o **mesmo** RRT\* e passa o melhor caminho pelo estágio de
@@ -529,9 +584,10 @@ eram **fixos** e, quando o B-spline resultava em **colisão** (ou a interpolaç�
 falhava), o código **retornava o caminho original do RRT\*** — nesses casos o
 "RRT\*+B-spline" era literalmente a trajetória do RRT\* e sem custo extra de
 spline, o que derrubava a média e o desvio do tempo abaixo do RRT\* puro. Na
-versão atual: parâmetros varridos/selecionados + piso de tempo
-(`_VARIANT_MIN_TIME_VS`), e o RRT\*+B-spline passa a demorar **0.24 s ≥ 0.12 s**
-do RRT\*.
+versão atual: parâmetros varridos/selecionados; a tabela mostra o RRT\*+B-spline
+em **0.06 s** vs RRT\* **0.12 s**, mas isso **não** é efeito da velocidade do
+smoothing — são regimes de `cc` diferentes (`1.0` vs `3.0`); emparelhado na mesma
+base, os tempos batem dentro de ~0.1 ms (ver acima).
 
 **Bug de tempo do DE2D sem obstáculos (2026-10-19):** em `de2d_nurbs.py:272`,
 `is_circle` exigia `len(expanded_obs) > 0`; com `prog00` (0 obstáculos) caía no
@@ -543,6 +599,30 @@ tempo; comprimentos bit-idênticos). Correção: pular a colisão quando
 `summary_pre_de2dtime.pkl`): `prog00` caiu de **9.97 s → 0.375 s**, heatmap agora
 monotônico (0.375 → 1.155 s), e a média IQR do DE2D passou de 0.80 → **0.78 s**.
 Tabela/gráficos regenerados (`combined_summary.csv`, `plots/`).
+
+**PSO2D-NURBS adicionado ao experimento (2026-10-19):** rodados os 100 cenários
+com **400 gerações × 50 pop = 20 000 FEs** (configuração baseline do PSO) e
+gravadas as 100 linhas em `summary.pkl`/`summary.csv` + os caminhos em
+`paths.pkl` (backups `summary_pre_pso400.pkl` / `paths_pre_pso400.pkl`; total
+agora 14 600 linhas). `run_pso2d_nurbs` ganhou `n_generations`/`pop_size`
+opcionais (defaults 400/50, sem mudar o comportamento anterior). Resultado:
+**feas 0.72**, tempo **3.62 s ± 0.29 s**, Best 10 **0/10**, Norm. Len **---**,
+Avg Rank **4.02**. O `ensure_feasible` foi corrigido para **usar o flag
+`feasible` gravado** (regra estrita de curvatura) em vez de recalcular só por
+`cv`: 6 caminhos do PSO ficam logo acima de `κ_max·1.05` (ex.: 1.4410 vs limite
+1.4384), tinham `cv` arredondado para 0 e apareciam indevidamente como factíveis
+(0.78 → **0.72**). Para os demais planejadores o flag gravado e o recálculo
+coincidiam, então nada mais mudou. `combined_summary.csv` e `plots/` regenerados.
+
+**PSO2D-NURBS com 100 indivíduos (2026-10-19):** por decisão do usuário, o PSO
+passou a usar **400 gerações × 100 pop = 40 000 FEs** (mesmo orçamento do DE).
+`run_pso2d_nurbs` teve o default `pop_size` alterado de 50 → 100. Os 100 cenários
+foram re-rodados (`/tmp/opencode/add_pso100pop.py`, `n_jobs=8`; backups
+`summary_pre_pso100pop.pkl`/`paths_pre_pso100pop.pkl`). Resultado: **feas 0.69**,
+tempo **7.29 s ± 0.57 s**, Best 10 **1/10**, Norm. Len **1.000**, Avg Rank
+**4.08**. Com isso o PSO passa a vencer um bloco (prog01, factível nas 10 seeds) e
+o DE2D cai de 8/10 para **7/10** (Norm. Len 1.002, rank 2.35); os ranks dos demais
+quase não mudam. Tabela, `combined_summary.csv` e `plots/` regenerados.
 
 
 ---
